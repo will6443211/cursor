@@ -5846,6 +5846,29 @@ def main():
                       "sl": (exits_by_name.get(x["name"]) or {}).get("sl"),
                       "tp": (lambda e: f"{e['tp1']}/{e['tp2']}" if e else None)(exits_by_name.get(x["name"]))} for x in alt_pool],
         "daban": [{"name": x[0], "score": x[3], "setup": (daban_by_code.get(x[7]) or {}).get("setup")} for x in daban_ok],
+        "left_try": left_names,
+        "portfolio": {
+            "cfg": pf.get("cfg"),
+            "used_pct": round(pf.get("used_pct") or 0, 1),
+            "warn": pf.get("warn") or [],
+            "line_share": {k: round(v, 1) for k, v in (pf.get("line_share") or {}).items()},
+            "plan": [
+                {"name": r["name"], "line": r["line"], "shares": r["shares"],
+                 "amt": round(r["amt"]), "pct": round(r["pct"], 1),
+                 "sl": r["sl"], "stop_pct": round(r["stop_pct"], 2),
+                 "net_rr": round(r["net_rr"], 2) if r.get("net_rr") else None,
+                 "binding": r["binding"]}
+                for r in (pf.get("plan") or [])
+            ],
+            "skipped": [{"name": x["name"], "reason": x["reason"]} for x in (pf.get("skipped") or [])],
+        },
+        "review": review or {},
+        "mood": {
+            "phase": mood.get("phase"), "n_zt": mood.get("n_zt"), "n_dt": mood.get("n_dt"),
+            "high": mood.get("high"), "n_lian": mood.get("n_lian"),
+            "env": {k: mood.get("env", {}).get(k) for k in ("n", "prem", "adv", "green", "ok")},
+        },
+        "data_health": {"missing_quote": miss_q, "fetch_fail": FETCH_FAIL},
     }
     open(os.path.join(ROOT, "reports", "latest.json"), "w", encoding="utf-8").write(
         json.dumps(meta, ensure_ascii=False, indent=2)

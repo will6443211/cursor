@@ -1,0 +1,6 @@
+__pycache__/
+logs/
+reports/
+自选快照.html
+自选快照.pdf
+.watch_secret

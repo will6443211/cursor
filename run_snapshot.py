@@ -357,11 +357,15 @@ def vr_norm(vr, now=None):
 
 
 def hs_proj(hs, now=None):
-    """把当前换手率折算成全天预估换手，5% 的门槛才有一致含义。"""
+    """把当前换手率折算成全天预估换手，5% 的门槛才有一致含义。
+    外推倍数封在 4.5 倍（约等于 10:00 的水平）：开盘几分钟的样本太少，
+    再往上外推就是拿噪声当结论了。"""
     if hs is None:
         return None
     t, v = session_progress(now)
-    return hs / v if v else hs
+    if not v:
+        return hs
+    return hs * min(1.0 / v, 4.5)
 
 
 def limit_open_dump(s, q):
@@ -2869,11 +2873,15 @@ def gate_state_save():
         pass
 
 
-def hysteresis(code, call, why, score=None, enter=None, hold=None):
+SOFT_DOWNGRADE = ("未达标", "无量站上均价", "量比过低且收阴")
+
+
+def hysteresis(code, call, why, score=None, enter=None, hold=None, soft=SOFT_DOWNGRADE):
     """同一天里同一只票在阈值上反复翻转最伤胜率。
     升级到可小仓：分数刚过线（enter~enter+5）要连续两次达标才放行；
-    已在可小仓：分数回落到 hold 以上仍维持，不因 0.1 分掉出去。
-    只作用于「分数未达标」这一类降级，回避/退潮/骗炮等硬否决不受影响。"""
+    已在可小仓：分数回落到 hold 以上、且降级理由只是「分数/量比没够」这类阈值噪声时，
+    维持可小仓不来回改口。
+    回避、退潮、骗炮、破均价、涨停过热这些硬否决不在 soft 里，立即生效不等确认。"""
     prev = GATE_PREV.get(code) or {}
     marginal = (
         call == "可小仓" and score is not None and enter is not None and score < enter + 5
@@ -2885,10 +2893,10 @@ def hysteresis(code, call, why, score=None, enter=None, hold=None):
     elif (
         call == "观察" and prev.get("call") == "可小仓"
         and score is not None and hold is not None and score >= hold
-        and "未达标" in (why or "")
+        and any(k in (why or "") for k in soft)
     ):
         out_call = "可小仓"
-        out_why = f"在滞后带内（{score:.0f}≥{hold:.0f}），维持可小仓不来回改口"
+        out_why = f"在滞后带内（{score:.0f}≥{hold:.0f}），维持可小仓不来回改口（原因：{why}）"
     GATE_NOW[code] = {"call": out_call, "raw": call, "marginal": bool(marginal), "score": round(score or 0, 1)}
     return out_call, out_why
 
@@ -3232,10 +3240,15 @@ def verdict_youzi(s, q, f, yld, yz, st, mood, late):
         return hysteresis(s["code"], "观察", f"7a {sc:.0f}未达标", sc, 65, 60)
     if st == "回避":
         return "观察", "主线回避"
-    hs = hs_proj(q.get("turnover"))
+    hs_raw = q.get("turnover")
+    hs = hs_proj(hs_raw)
     vr = vr_norm(q.get("vol_ratio") or 0)
-    if not ((hs is not None and hs >= 5) or vr >= 1.5):
-        return "观察", f"换手/量比不够（全天折算换手{hs:.1f}%、归一量比{vr:.2f}）" if hs is not None else "换手/量比不够"
+    # 折算值要过 5%，同时已成交的换手本身不能太小，否则等于拿开盘几分钟的噪声开仓
+    hs_ok = hs is not None and hs >= 5 and (hs_raw or 0) >= 1.0
+    if not (hs_ok or vr >= 1.5):
+        if hs is not None:
+            return "观察", f"换手/量比不够（现换手{hs_raw:.1f}%、全天折算{hs:.1f}%、归一量比{vr:.2f}）"
+        return "观察", "换手/量比不够"
     if late:
         return "观察", "尾盘/收盘后不新开"
     return hysteresis(s["code"], "可小仓", how, sc, 65, 60)

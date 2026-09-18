@@ -1,0 +1,9 @@
+{
+  "capital": 100000,
+  "risk_pct": 1.0,
+  "max_total_pct": 60,
+  "max_line_pct": 25,
+  "max_name_pct": 20,
+  "max_per_line": 2,
+  "cost_pct": 0.1
+}

@@ -15,13 +15,48 @@ except Exception:
     MACRO = {}
 
 
-def http(url, gbk=False, timeout=12):
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://quote.eastmoney.com/",
-    })
-    b = urllib.request.urlopen(req, timeout=timeout).read()
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+# 拉不到数据时静默吞掉，会让报告拿着残缺数据照样给出一副很确定的结论。
+# 这里统一做退避重试，并把失败次数记下来在报告里报出去。
+FETCH_FAIL = {}
+
+
+def _note_fail(tag):
+    FETCH_FAIL[tag] = FETCH_FAIL.get(tag, 0) + 1
+
+
+def _get(url, headers, timeout, tries=3):
+    last = None
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            return urllib.request.urlopen(req, timeout=timeout).read()
+        except Exception as e:
+            last = e
+            if i < tries - 1:
+                import time as _t
+                _t.sleep(0.4 * (2 ** i))
+    raise last
+
+
+def http(url, gbk=False, timeout=12, tries=3):
+    b = _get(url, {"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"}, timeout, tries)
     return b.decode("gbk", "replace") if gbk else json.loads(b)
+
+
+NAME_CACHE = {}  # code -> name。给 ST 判定用，避免各处再传 name
+
+
+def _f(x, d=None):
+    try:
+        if x in ("", "-", None):
+            return d
+        return float(x)
+    except Exception:
+        return d
 
 
 def tencent(codes):
@@ -34,7 +69,7 @@ def tencent(codes):
         if len(p) < 50:
             continue
         try:
-            out[p[2]] = {
+            row = {
                 "name": p[1],
                 "px": float(p[3]),
                 "prev": float(p[4]),
@@ -48,7 +83,12 @@ def tencent(codes):
                 "vol_ratio": float(p[49] or 0),
                 "vwap": float(p[51]) if len(p) > 51 and p[51] not in ("", "-") else None,
                 "amt_wan": float(p[36] or 0),
+                # 买卖一档：封单额/承接量用，打板质量靠这个，不再靠猜
+                "bid1": _f(p[9]), "bid1_lot": _f(p[10], 0),
+                "ask1": _f(p[19]), "ask1_lot": _f(p[20], 0),
             }
+            out[p[2]] = row
+            NAME_CACHE[p[2]] = p[1]
         except Exception:
             continue
     return out
@@ -79,22 +119,29 @@ def tencent_symbol(s):
     return ("sh" if s.get("market") == "sh" else "sz") + s["code"]
 
 
-def http_json(url, timeout=12, referer="https://gu.qq.com/"):
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0",
-        "Referer": referer,
-    })
-    b = urllib.request.urlopen(req, timeout=timeout).read()
+def http_json(url, timeout=12, referer="https://gu.qq.com/", tries=3):
+    b = _get(url, {"User-Agent": UA, "Referer": referer, "Accept": "*/*"}, timeout, tries)
     return json.loads(b.decode("utf-8", "replace"))
 
 
 def tencent_daily(s, n=160):
-    """A股前复权日K。东财 kline 盘后常空，腾讯作主源。"""
+    """A股前复权日K。东财 kline 盘后常空，腾讯作主源；单域名限频时换备用域名。"""
     code = tencent_symbol(s)
-    url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={code},day,,,{n},qfq"
-    d = http_json(url, timeout=10)
-    data = ((d.get("data") or {}).get(code) or {})
-    rows = data.get("qfqday") or data.get("day") or []
+    hosts = ("web.ifzq.gtimg.cn", "proxy.finance.qq.com/ifzqgtimg", "ifzq.gtimg.cn")
+    d, rows, data = None, [], {}
+    for h in hosts:
+        url = f"https://{h}/appstock/app/fqkline/get?param={code},day,,,{n},qfq"
+        try:
+            d = http_json(url, timeout=10, tries=2)
+        except Exception:
+            continue
+        data = ((d.get("data") or {}).get(code) or {})
+        rows = data.get("qfqday") or data.get("day") or []
+        if rows:
+            break
+    if not rows:
+        _note_fail("日线")
+        return []
     bars = []
     for r in rows:
         if not r or len(r) < 6:
@@ -145,6 +192,12 @@ def daily_hist(s):
             return bars
     except Exception:
         bars = []
+    try:
+        eb = em_daily(s)
+        if len(eb) >= 30:
+            return eb
+    except Exception:
+        pass
     ysym = s["code"] + (".SS" if s.get("market") == "sh" else ".SZ")
     try:
         yb = yahoo_hist(ysym)
@@ -152,7 +205,36 @@ def daily_hist(s):
             return yb
     except Exception:
         pass
+    if not bars:
+        _note_fail("日线全部源")
     return bars or []
+
+
+def em_daily(s, n=160):
+    """东财日K备源。腾讯限频时顶上，口径同为前复权。"""
+    code = s["code"]
+    mkt = 1 if (s.get("market") or infer_market(code)) == "sh" else 0
+    url = (
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get?"
+        f"secid={mkt}.{code}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57"
+        f"&klt=101&fqt=1&end=20500101&lmt={n}"
+        "&ut=fa5fd1943c7b386f172d6893dbfba10b"
+    )
+    d = http_json(url, timeout=10, referer="https://quote.eastmoney.com/", tries=2)
+    klines = ((d.get("data") or {}) or {}).get("klines") or []
+    bars = []
+    for ln in klines:
+        p = str(ln).split(",")
+        if len(p) < 6:
+            continue
+        try:
+            dte, o, c, h, l, v = p[0], float(p[1]), float(p[2]), float(p[3]), float(p[4]), float(p[5])
+        except Exception:
+            continue
+        if v == 0:
+            continue
+        bars.append((dte, o, h, l, c, v))
+    return bars
 
 
 def sma(a, n):
@@ -186,12 +268,100 @@ def is_20cm(code):
     return code.startswith(("300", "301", "688"))
 
 
-def is_limit_up(code, chg):
-    return chg >= (19.5 if is_20cm(code) else 9.5)
+def is_st(code, name=None):
+    nm = (name or NAME_CACHE.get(code) or "").upper()
+    return "ST" in nm or "退" in nm
 
 
-def board_limit_pct(code):
-    return 20.0 if is_20cm(code) else 10.0
+def board_limit_pct(code, name=None):
+    """涨跌停幅度。ST 5%、北交所 30%、创业板/科创 20%、其余 10%。"""
+    if is_st(code, name):
+        return 5.0
+    if code.startswith(("8", "4", "920")):
+        return 30.0
+    if code.startswith(("300", "301", "688")):
+        return 20.0
+    return 10.0
+
+
+def is_limit_up(code, chg, name=None):
+    lim = board_limit_pct(code, name)
+    return chg >= lim - 0.5
+
+
+def is_limit_down(code, chg, name=None):
+    lim = board_limit_pct(code, name)
+    return chg <= -(lim - 0.5)
+
+
+def overheat(code, chg, name=None):
+    """过热分档。按本板涨停幅度折算，10cm 保持原来的 5%/7%/9.2% 手感，20cm 不再被 7% 一刀切。"""
+    lim = board_limit_pct(code, name)
+    if chg is None:
+        return "正常"
+    if is_limit_up(code, chg, name):
+        return "涨停"
+    r = chg / lim if lim else 0
+    if r >= 0.92:
+        return "见顶"
+    if r >= 0.70:
+        return "不追"
+    if r >= 0.50:
+        return "偏热"
+    return "正常"
+
+
+# A股日内成交量 U 型分布：到该时点应完成的当日成交量占比
+VOL_CURVE = [
+    ("09:30", 0.00), ("10:00", 0.22), ("10:30", 0.35), ("11:00", 0.45),
+    ("11:30", 0.54), ("13:00", 0.54), ("13:30", 0.63), ("14:00", 0.72),
+    ("14:30", 0.82), ("15:00", 1.00),
+]
+
+
+def session_progress(now=None):
+    """(已走时间占比, 应完成成交量占比)。收盘后/盘前都给 (1,1)，阈值不做时段调整。"""
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    hm = now.strftime("%H:%M")
+    if hm < "09:30":
+        return 1.0, 1.0
+    if hm >= "15:00":
+        return 1.0, 1.0
+    if "11:30" <= hm < "13:00":
+        return 0.5, 0.54
+    mins = int(hm[:2]) * 60 + int(hm[3:])
+    elapsed = mins - (9 * 60 + 30) if hm < "11:30" else 120 + (mins - 13 * 60)
+    t = clip(elapsed / 240.0, 0.01, 1.0)
+    v = 0.0
+    for i in range(1, len(VOL_CURVE)):
+        t0, v0 = VOL_CURVE[i - 1]
+        t1, v1 = VOL_CURVE[i]
+        if t0 <= hm < t1:
+            span = (int(t1[:2]) * 60 + int(t1[3:])) - (int(t0[:2]) * 60 + int(t0[3:]))
+            done = mins - (int(t0[:2]) * 60 + int(t0[3:]))
+            v = v0 + (v1 - v0) * (done / span if span else 1)
+            break
+    else:
+        v = 1.0
+    return t, clip(v, 0.02, 1.0)
+
+
+def vr_norm(vr, now=None):
+    """量比时段归一。早盘成交前置，1.5 的量比在 10:00 并不等于 14:30 的 1.5。"""
+    if not vr:
+        return vr or 0
+    t, v = session_progress(now)
+    if v <= 0:
+        return vr
+    return vr * (t / v)
+
+
+def hs_proj(hs, now=None):
+    """把当前换手率折算成全天预估换手，5% 的门槛才有一致含义。"""
+    if hs is None:
+        return None
+    t, v = session_progress(now)
+    return hs / v if v else hs
 
 
 def limit_open_dump(s, q):
@@ -202,17 +372,66 @@ def limit_open_dump(s, q):
     if prev <= 0 or o <= 0 or p <= 0:
         return False
     gap = (o / prev - 1) * 100
-    if not (is_limit_up(s["code"], gap) or gap >= 9.5):
+    lim = board_limit_pct(s["code"], q.get("name"))
+    if not (is_limit_up(s["code"], gap, q.get("name")) or gap >= lim * 0.9):
         return False
     drop = (o - p) / o * 100
     return p < o * 0.997 or drop >= 3.0
 
 
 def trend_chg_cap(code, atr_pct):
-    """趋势今涨上限：跟 ATR 和 10cm/20cm 板走，不再 3% 一刀切。"""
+    """趋势今涨上限：跟 ATR 和本板涨停幅度走，不再 3% 一刀切。"""
     board = board_limit_pct(code)
     ap = atr_pct if atr_pct else 2.5
     return min(board * 0.35, max(1.2, ap * 1.2))
+
+
+def seal_quality(q, code):
+    """封单质量。买一价贴涨停时 封单额=买一量×100×价，封成比=封单额/成交额。"""
+    out = {"at_limit": False, "seal_yi": None, "seal_ratio": None, "tag": "-"}
+    if not q:
+        return out
+    if not is_limit_up(code, q.get("chg") or 0, q.get("name")):
+        return out
+    out["at_limit"] = True
+    b1, lot = q.get("bid1"), q.get("bid1_lot") or 0
+    if not b1 or lot <= 0:
+        out["tag"] = "封单未知"
+        return out
+    seal = b1 * lot * 100
+    amt = (q.get("amt_wan") or 0) * 1e4
+    out["seal_yi"] = seal / 1e8
+    if amt > 0:
+        out["seal_ratio"] = seal / amt
+    r = out["seal_ratio"]
+    if r is None:
+        out["tag"] = f"封单{out['seal_yi']:.2f}亿"
+    elif r >= 0.5:
+        out["tag"] = f"硬板 封单{out['seal_yi']:.2f}亿/封成{r:.2f}"
+    elif r >= 0.15:
+        out["tag"] = f"一般 封单{out['seal_yi']:.2f}亿/封成{r:.2f}"
+    else:
+        out["tag"] = f"弱板 封单{out['seal_yi']:.2f}亿/封成{r:.2f}"
+    return out
+
+
+def open_times(pts, prev, code, name=None):
+    """开板次数：分时触及涨停价后又离开的次数。烂板和硬板不能同价看待。"""
+    if not pts or not prev:
+        return None
+    lim = limit_price(prev, code, name)
+    if not lim:
+        return None
+    touched, opens, on = False, 0, False
+    for row in pts:
+        p = row[1]
+        at = p >= lim - 0.005
+        if at:
+            touched, on = True, True
+        elif on:
+            opens += 1
+            on = False
+    return opens if touched else None
 
 
 def vwap_path(q, pts):
@@ -262,8 +481,8 @@ def yday_limit_down(code, hist):
     prev, prev2 = done[-1][4], done[-2][4]
     if prev2 <= 0:
         return False
-    chg = prev / prev2 - 1
-    return chg <= (-0.195 if is_20cm(code) else -0.095)
+    chg = (prev / prev2 - 1) * 100
+    return is_limit_down(code, chg)
 
 
 def yday_dt_shape(q, yld):
@@ -275,14 +494,16 @@ def yday_dt_shape(q, yld):
     vwap = q.get("vwap")
     gap = (o / prev - 1) * 100
     chg = q["chg"]
+    vr = vr_norm(q.get("vol_ratio") or 0)
     if gap >= 0.5 and p < o:
         return "trap"
     if gap <= -0.15 and h > prev and p < o:
         return "trap"
-    if chg > 0 and (vwap is None or p >= vwap):
+    # 弱转强要的是低开+站上均价+放量，不是随便飘个红
+    if chg > 0 and gap <= -1.0 and p >= o and (vwap is None or p >= vwap) and vr >= 1.2:
         return "turn"
     if chg > 0:
-        return "turn"
+        return "weak"
     return "weak"
 
 
@@ -306,7 +527,7 @@ def index_shape(q):
     return "震荡"
 
 
-def score_row(hist, live):
+def score_row(hist, live, code=""):
     """表一正常打分。权重不变。均线用已完成日K，现价比均线；量能用实时量比。"""
     done = strip_today(hist) if hist else []
     if not done:
@@ -345,9 +566,12 @@ def score_row(hist, live):
     if dd > -0.02:
         chase_pen += 10
     live_chg = live["chg"] if live else 0
-    if live_chg >= 9.5:
+    oh = overheat(code, live_chg, live.get("name")) if live else "正常"
+    if oh in ("涨停", "见顶"):
         chase_pen += 30
-    elif live_chg >= 5:
+    elif oh == "不追":
+        chase_pen += 20
+    elif oh == "偏热":
         chase_pen += 12
     vs_vwap = 0
     if live and live.get("vwap"):
@@ -508,7 +732,7 @@ def auction_vol_ratio(pts, hist):
 
 def auction_judge(s, q, f, hist, yld=False):
     """自选集合竞价判断。主流量价：开幅+竞价量比+开后是否站开盘+位置。
-    9:15-9:20可撤单噪声大；开盘价=9:25撮合结果。不进表一分、不进8因子。"""
+    9:15-9:20可撤单噪声大；开盘价=9:25撮合结果。不进表一分、不进7因子。"""
     empty = {
         "call": "竞价缺", "gap": None, "vr": None, "vol_cls": "-",
         "why": "开盘/竞价数据暂缺", "tag": "竞价缺", "bits": [],
@@ -549,7 +773,7 @@ def auction_judge(s, q, f, hist, yld=False):
 
     call, why = "正常", "竞价中性，开后确认"
     # 一字/近涨停开盘。开后砸盘必须改口，不能一直挂「抢筹强」。
-    if is_limit_up(s["code"], gap) or gap >= 9.5:
+    if is_limit_up(s["code"], gap, q.get("name")) or gap >= board_limit_pct(s["code"], q.get("name")) * 0.9:
         if broken or (not held) or limit_open_dump(s, q):
             call, why = "骗炮警惕", "竞价涨停/近板开后砸盘，出货优先"
         elif vol_cls in ("缩量", "温和", "不明") or (vr is not None and vr < 2):
@@ -915,25 +1139,33 @@ def youzi_tape_hits(s, q, hist=None):
     return hits
 
 
+BIG_CAP_YI = 400.0  # 超过这个市值的票不当游资标的，不管代码是不是 300/688
+
+
 def stock_kind(s, q, hist=None):
-    """先点名/板块，再叠加券商盘面条件，提高游资入池比重。不改表一均线分、不改8因子。"""
+    """分类看盘面和体量，名单只作弱先验。
+    修正：过去 300/688 一律判游资，把新易盛/天孚这种千亿光模块票推进 7a 闸，
+    和同一条主线的中际旭创（趋势闸）结论打架。现在大市值一律走趋势。"""
     if s.get("asset") == "etf" or "ETF" in (s.get("name") or ""):
         return "ETF"
+    yi = mcap_yi(q)
+    big = yi is not None and yi >= BIG_CAP_YI
     if s["name"] in TREND_NAMES:
+        return "趋势"
+    if big:
         return "趋势"
     if s.get("board") in TREND_BOARDS:
         return "趋势"
     if s.get("board") in YOUZI_BOARDS:
         return "游资"
-    if is_20cm(s["code"]):
-        return "游资"
     hits = youzi_tape_hits(s, q, hist)
-    if len(hits) >= 2:
+    if is_20cm(s["code"]) and len(hits) >= 2:
         return "游资"
-    yi = mcap_yi(q)
+    if len(hits) >= 3:
+        return "游资"
     hs = (q.get("turnover") if q else None) or 0
     amp = (q.get("amp") if q else 0) or 0
-    vr = (q.get("vol_ratio") if q else 0) or 0
+    vr = vr_norm((q.get("vol_ratio") if q else 0) or 0)
     if yi is not None and yi < 250 and (hs >= 5 or amp >= 5 or vr >= 1.8):
         return "游资"
     return "趋势"
@@ -974,9 +1206,14 @@ def stock_flow(stocks):
 
 
 def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=None):
-    """8因子游资分。不改表一正常打分。"""
+    """7因子游资分（原8因子）。
+    改动：今主力/5日主力/资金同向三项本来是同一个东财估算口径、合计占 0.47，
+    现在合成一项占 0.30；腾出的权重给竞价、空间、低位，并新增一项「承接质量」
+    （分时均价关系 + 封单额/封成比 + 开板次数）——这项和资金口径不相关，是真新增信息。
+    量比/换手先做时段归一，早盘不再天然高分。"""
     chg = q["chg"] if q else 0
-    vr = q["vol_ratio"] if q else 0
+    vr_raw = q["vol_ratio"] if q else 0
+    vr = vr_norm(vr_raw)
     amp = q["amp"] if q else 0
     mcap = q["mcap"] if q else 0
     yi = mcap / 10000.0 if mcap > 10000 else mcap
@@ -1032,10 +1269,10 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
     elast_mark = "高" if s_elast >= 70 else ("中" if s_elast >= 45 else "低")
 
     # 5 涨停空间
-    cap = 20.0 if is_20cm(s["code"]) else 10.0
+    cap = board_limit_pct(s["code"], q.get("name") if q else None)
     room = cap - chg
     s_room = clip(room / cap * 100, 0, 100)
-    room_mark = "见顶" if room <= 1 else ("紧" if room <= 3 else "足")
+    room_mark = "见顶" if room <= cap * 0.1 else ("紧" if room <= cap * 0.3 else "足")
 
     # 6 竞价质量：高开低走骗炮；昨跌停看形态，不一律骗炮
     o, p, prev = q["open"], q["px"], q["prev"]
@@ -1062,18 +1299,57 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
         s_low = clip(s_low + 12, 0, 100)
     low_mark = "有" if (dd is not None and dd <= -0.12 and chg >= 2) else ("远" if dd is not None and dd <= -0.2 else "无")
 
-    # 8 追高罚：涨停、+10%、量比爆了还顶
+    # 8 承接质量：分时均价关系 + 封单/开板。和资金口径不相关，是新增的独立信息
+    seal = seal_quality(q, s["code"])
+    pts = (f or {}).get("_min") or []
+    n_open = open_times(pts, q.get("prev"), s["code"], q.get("name")) if pts else None
+    vwap_q = q.get("vwap")
+    s_hold = 50
+    hold_bits = []
+    if vwap_q and p:
+        dev = (p / vwap_q - 1) * 100
+        if dev >= 0.5:
+            s_hold, _t = 82, "均价上方"
+        elif dev >= -0.1:
+            s_hold, _t = 68, "贴均价"
+        elif dev >= -0.8:
+            s_hold, _t = 38, "均价下方"
+        else:
+            s_hold, _t = 18, "远离均价下"
+        hold_bits.append(_t)
+        if (f or {}).get("vwap_reclaim") and (f or {}).get("vwap_held"):
+            s_hold = clip(s_hold + 10, 0, 100)
+            hold_bits.append("破后站回")
+    if seal.get("at_limit"):
+        r = seal.get("seal_ratio")
+        if r is not None:
+            if r >= 0.5:
+                s_hold = clip(max(s_hold, 88), 0, 100)
+                hold_bits.append("硬板")
+            elif r >= 0.15:
+                s_hold = clip(max(s_hold, 68), 0, 100)
+                hold_bits.append("封单一般")
+            else:
+                s_hold = min(s_hold, 32)
+                hold_bits.append("弱板")
+    if n_open is not None and n_open >= 1:
+        s_hold = clip(s_hold - 12 * min(n_open, 3), 0, 100)
+        hold_bits.append(f"开板{n_open}次")
+    hold_mark = "/".join(hold_bits) if hold_bits else "均价缺"
+
+    # 追高罚：按本板涨停幅度折算，20cm 不再按 10cm 的尺子罚
     chase = 0
     chase_bits = []
-    if is_limit_up(s["code"], chg) or chg >= 9.8:
+    oh = overheat(s["code"], chg, q.get("name") if q else None)
+    if oh in ("涨停", "见顶"):
         chase += 40
-        chase_bits.append("涨停/+10%")
-    elif chg >= 7:
+        chase_bits.append(f"{oh}罚")
+    elif oh == "不追":
         chase += 22
-        chase_bits.append("+7%罚")
-    elif chg >= 5:
+        chase_bits.append("过热罚")
+    elif oh == "偏热":
         chase += 12
-        chase_bits.append("+5%罚")
+        chase_bits.append("偏热罚")
     if vr >= 8:
         chase += 10
         chase_bits.append("量比爆")
@@ -1088,10 +1364,14 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
         chase_bits.append("昨跌停弱转强")
     chase_mark = ",".join(chase_bits) if chase_bits else "无"
 
+    # 资金三项合成一块，避免同一个东财估算口径占掉近一半权重
+    s_money = 0.45 * s_main_td + 0.20 * s_main5 + 0.35 * s_same
     score = (
-        0.10 * s_sec + 0.22 * s_main_td + 0.10 * s_main5 + 0.15 * s_same
-        + 0.18 * s_elast + 0.08 * s_room + 0.08 * s_auc + 0.09 * s_low - chase
+        0.10 * s_sec + 0.30 * s_money + 0.18 * s_elast
+        + 0.10 * s_room + 0.12 * s_auc + 0.10 * s_low + 0.10 * s_hold
+        - chase
     )
+    score = clip(score, 0, 100)
 
     vwap = q.get("vwap")
     low = q["low"]
@@ -1105,9 +1385,9 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
             how = "ETF观察"
         else:
             how = "ETF不做"
-    elif is_limit_up(s["code"], chg):
+    elif is_limit_up(s["code"], chg, q.get("name")):
         how = "涨停，结束/观察"
-    elif chg >= 9.5:
+    elif oh == "见顶":
         how = "空间见顶，不追"
     elif auc_mark == "骗炮":
         how = "昨跌停骗炮，不做" if dt == "trap" else "高开低走骗炮，不做"
@@ -1134,8 +1414,8 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
     if main5:
         flow_txt += f" 5日{main5/1e8:+.1f}亿"
     factor_line = (
-        f"板块{sec_mark}；{main5_mark}；涨幅{same_mark}；弹性{elast_mark}；"
-        f"空间{room_mark}；竞价{auc_mark}；低位{low_mark}；追高{chase_mark}"
+        f"板块{sec_mark}；资金{same_mark}({main5_mark})；弹性{elast_mark}；"
+        f"空间{room_mark}；竞价{auc_mark}；低位{low_mark}；承接{hold_mark}；追高{chase_mark}"
     )
     return {
         "score": score, "kind": stock_kind(s, q, hist), "how": how, "board": board,
@@ -1145,10 +1425,12 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
         "main": main, "main5": main5, "xlarge": xlarge,
         "main_pct": (flow or {}).get("main_pct") or 0,
         "same_txt": same_txt, "same_mark": same_mark,
+        "hold": s_hold, "hold_mark": hold_mark, "seal": seal, "n_open": n_open,
+        "overheat": oh, "vr_norm": vr, "vr_raw": vr_raw,
         "marks": {
-            "板块资金": sec_mark, "主力5日": main5_mark, "资金涨幅同向": same_mark,
+            "板块资金": sec_mark, "资金合成": same_mark, "主力5日": main5_mark,
             "游资弹性": elast_mark, "涨停空间": room_mark, "竞价质量": auc_mark,
-            "低位启动": low_mark, "追高罚": chase_mark,
+            "低位启动": low_mark, "承接质量": hold_mark, "追高罚": chase_mark,
         },
     }
 
@@ -1906,7 +2188,7 @@ def line_policy(inn_lines, out_lines):
 
 
 def flow_heat_map(inn, outf):
-    """当日板块主力热度。只给排名用，不进表一分、不进8因子。"""
+    """当日板块主力热度。只给排名用，不进表一分、不进7因子。"""
     m = {}
 
     def eat(rows, side):
@@ -1942,8 +2224,167 @@ def hy_match_board(hy, board):
     return False
 
 
-def market_mood():
-    """全市场涨停生态。只作表二环境层，不进 8 因子分。"""
+ZT_DIR = os.path.join(ROOT, "reports", "ztpool")
+
+
+def prev_trade_date_str(now=None, hist=None):
+    """上一个交易日 YYYYMMDD。优先用已完成日线的最后一根（最准，自带节假日），
+    拿不到再按自然日回退并跳过周末。"""
+    if hist:
+        try:
+            return str(hist[-1][0]).replace("-", "")
+        except Exception:
+            pass
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    d = now - datetime.timedelta(days=1)
+    for _ in range(7):
+        if d.weekday() < 5:
+            return d.strftime("%Y%m%d")
+        d -= datetime.timedelta(days=1)
+    return d.strftime("%Y%m%d")
+
+
+def zt_pool(date_s=None, pages=6, pagesize=100):
+    """东财涨停池。给出连板数 lbc、封单额 fund、开板次数 zbc、首封时间 fbt、换手 hs。
+    打板过去缺的就是这几个数，不再靠猜。历史日期落盘缓存，只抓一次。"""
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    date_s = date_s or now.strftime("%Y%m%d")
+    today_s = now.strftime("%Y%m%d")
+    fn = os.path.join(ZT_DIR, f"{date_s}.json")
+    if date_s != today_s and os.path.isfile(fn):
+        try:
+            return json.load(open(fn, encoding="utf-8"))
+        except Exception:
+            pass
+    rows = []
+    for pi in range(pages):
+        url = (
+            "https://push2ex.eastmoney.com/getTopicZTPool?"
+            "ut=7eea3edcaed734bea9cbfc24409ed989&dpt=wz.ztzt"
+            f"&Pageindex={pi}&pagesize={pagesize}&sort=fbt%3Aasc&date={date_s}"
+        )
+        try:
+            j = http_json(url, timeout=8, referer="https://quote.eastmoney.com/")
+        except Exception:
+            break
+        pool = ((j.get("data") or {}) or {}).get("pool") or []
+        if not pool:
+            break
+        for x in pool:
+            try:
+                rows.append({
+                    "code": str(x.get("c") or "").zfill(6),
+                    "name": x.get("n") or "",
+                    "chg": float(x.get("zdp") or 0),
+                    "lbc": int(x.get("lbc") or 1),
+                    "fund": float(x.get("fund") or 0),
+                    "amount": float(x.get("amount") or 0),
+                    "zbc": int(x.get("zbc") or 0),
+                    "fbt": int(x.get("fbt") or 0),
+                    "hs": float(x.get("hs") or 0),
+                    "ltsz": float(x.get("ltsz") or 0),
+                    "hy": x.get("hybk") or "",
+                })
+            except Exception:
+                continue
+        if len(pool) < pagesize:
+            break
+    if rows and date_s != today_s:
+        try:
+            os.makedirs(ZT_DIR, exist_ok=True)
+            json.dump(rows, open(fn, "w", encoding="utf-8"), ensure_ascii=False)
+        except Exception:
+            pass
+    return rows
+
+
+def zt_map(rows):
+    return {r["code"]: r for r in rows or []}
+
+
+def zt_quality(rec):
+    """板的质量：封成比=封单额/成交额，开板次数，是否一字/秒板。"""
+    if not rec:
+        return {"tag": "无记录", "ratio": None, "hard": None, "yizi": False}
+    amt = rec.get("amount") or 0
+    ratio = (rec.get("fund") or 0) / amt if amt > 0 else None
+    zbc = rec.get("zbc") or 0
+    fbt = rec.get("fbt") or 0
+    hs = rec.get("hs") or 0
+    yizi = fbt <= 93100 and hs < 3
+    if ratio is None:
+        tag, hard = "封单未知", None
+    elif zbc >= 2:
+        tag, hard = f"烂板(开板{zbc}次)", False
+    elif ratio >= 0.5 and zbc == 0:
+        tag, hard = f"硬板(封成{ratio:.2f})", True
+    elif ratio >= 0.15:
+        tag, hard = f"一般板(封成{ratio:.2f}{'/开板'+str(zbc)+'次' if zbc else ''})", zbc == 0
+    else:
+        tag, hard = f"弱板(封成{ratio:.2f}{'/开板'+str(zbc)+'次' if zbc else ''})", False
+    if yizi:
+        tag = "一字板/秒板 " + tag
+    return {
+        "tag": tag, "ratio": ratio, "hard": hard, "yizi": yizi,
+        "zbc": zbc, "lbc": rec.get("lbc") or 1, "hs": hs,
+        "fund_yi": (rec.get("fund") or 0) / 1e8,
+    }
+
+
+def zt_ladder(rows):
+    """连板梯队。最高板和各高度家数，用来判空间压制和情绪位置。"""
+    lad = {}
+    for r in rows or []:
+        lad[r["lbc"]] = lad.get(r["lbc"], 0) + 1
+    hi = max(lad) if lad else 0
+    return {"ladder": lad, "high": hi, "n": len(rows or [])}
+
+
+def daban_env(zt_yday_rows, live_map=None):
+    """赚钱效应：昨日涨停股今天的平均涨幅、晋级率、翻绿率。
+    这是打板值不值得做的直接证据，比涨停家数有用。"""
+    rows = zt_yday_rows or []
+    out = {
+        "n": 0, "prem": None, "adv": None, "green": None,
+        "txt": "昨板今日表现暂缺", "ok": None,
+    }
+    if not rows:
+        return out
+    codes = [("sh" if r["code"].startswith(("6", "9")) else "sz") + r["code"] for r in rows[:120]]
+    live = live_map or {}
+    need = [c for c in codes if c[2:] not in live]
+    if need:
+        for i in range(0, len(need), 60):
+            try:
+                live.update(tencent(need[i:i + 60]))
+            except Exception:
+                continue
+    chgs, adv, green = [], 0, 0
+    for r in rows[:120]:
+        q = live.get(r["code"])
+        if not q:
+            continue
+        chgs.append(q["chg"])
+        if is_limit_up(r["code"], q["chg"], q.get("name")):
+            adv += 1
+        if q["chg"] < 0:
+            green += 1
+    if not chgs:
+        return out
+    out["n"] = len(chgs)
+    out["prem"] = sum(chgs) / len(chgs)
+    out["adv"] = adv / len(chgs) * 100
+    out["green"] = green / len(chgs) * 100
+    out["ok"] = out["prem"] >= 0.5 and out["adv"] >= 10
+    out["txt"] = (
+        f"昨板{out['n']}只今日均{out['prem']:+.2f}%、晋级{out['adv']:.0f}%、翻绿{out['green']:.0f}%"
+        + ("，赚钱效应在" if out["ok"] else "，赚钱效应差，打板降级")
+    )
+    return out
+
+
+def market_mood(zt_rows=None, env=None):
+    """全市场涨停生态。只作表二环境层，不进 7 因子分。"""
     empty = {
         "phase": "不明", "n_zt": 0, "n_dt": 0, "n_20": 0,
         "note": "涨停统计暂缺", "by_board": {}, "txt": "情绪：暂缺",
@@ -1985,8 +2426,7 @@ def market_mood():
             page_max = max(page_max, chg)
             if name.startswith("N") or "ST" in name:
                 continue
-            lim = 19.5 if code.startswith(("300", "301", "688")) else 9.5
-            if chg >= lim:
+            if is_limit_up(code, chg, name):
                 zt.append({"code": code, "name": name, "chg": chg, "hy": str(x.get("f100") or "")})
                 page_zt += 1
         if page_zt == 0 and page_max < 9.5:
@@ -2007,13 +2447,16 @@ def market_mood():
             page_min = min(page_min, chg)
             if "ST" in name:
                 continue
-            lim = -19.5 if code.startswith(("300", "301", "688")) else -9.5
-            if chg <= lim:
+            if is_limit_down(code, chg, name):
                 dt.append({"code": code, "name": name, "chg": chg, "hy": str(x.get("f100") or "")})
                 page_dt += 1
         if page_dt == 0 and page_min > -9.5:
             break
 
+    # 涨停池口径更准（含连板数），有就用它覆盖家数
+    pool = zt_rows or []
+    if pool:
+        zt = [{"code": r["code"], "name": r["name"], "chg": r["chg"], "hy": r["hy"]} for r in pool]
     n_zt, n_dt = len(zt), len(dt)
     n_20 = sum(1 for x in zt if x["code"].startswith(("300", "301", "688")))
     by_board = {}
@@ -2021,24 +2464,40 @@ def market_mood():
         names = [x for x in zt if hy_match_board(x["hy"], board)]
         hi = max((x["chg"] for x in names), default=0)
         by_board[board] = (len(names), hi)
+    lad = zt_ladder(pool)
+    n_lian = sum(v for k, v in (lad.get("ladder") or {}).items() if k >= 2)
+    prem = (env or {}).get("prem")
+    adv = (env or {}).get("adv")
 
-    if n_zt >= 80 and n_20 >= 6:
-        phase, note = "高潮", "跟风可看，不追高标；8因子分不改"
+    # 情绪分档：家数 + 连板梯队 + 昨板赚钱效应。之前打板分里引用的「发酵/启动」是死档，现在补上
+    if prem is not None and prem <= -1.5 and n_zt < 60:
+        phase, note = "退潮", "昨板today亏钱，打板空仓、游资只看"
+    elif n_zt >= 80 and (lad.get("high") or 0) >= 5:
+        phase, note = "高潮", "跟风可看，不追高标、不接最高板"
+    elif n_zt >= 45 and n_lian >= 6 and (prem is None or prem >= 0):
+        phase, note = "发酵", "梯队在长，首板/一进二是主战场"
     elif n_zt < 20 or n_dt >= max(15, n_zt):
-        phase, note = "退潮", "游资只看不追，不做首板高潮假设；8因子分不改"
+        phase, note = "退潮", "游资只看不追，不做首板高潮假设"
     elif n_zt < 40:
-        phase, note = "修复", "情绪一般，只做低位转强；8因子分不改"
+        phase, note = "修复", "情绪一般，只做低位转强"
     else:
-        phase, note = "平衡", "正常游资环境；8因子分不改"
-    txt = f"情绪{phase}：涨停{n_zt} 跌停{n_dt} 20cm涨停{n_20}。{note}"
+        phase, note = "平衡", "正常游资环境"
+    note += "；不进个股因子分"
+    txt = (
+        f"情绪{phase}：涨停{n_zt} 跌停{n_dt} 20cm{n_20} 连板{n_lian} 最高{lad.get('high') or 0}板。"
+        + (f"{(env or {}).get('txt')}。" if (env or {}).get("prem") is not None else "")
+        + note
+    )
     return {
         "phase": phase, "n_zt": n_zt, "n_dt": n_dt, "n_20": n_20,
         "note": note, "by_board": by_board, "txt": txt,
+        "ladder": lad.get("ladder") or {}, "high": lad.get("high") or 0,
+        "n_lian": n_lian, "env": env or {},
     }
 
 
 def lhb_warn_map():
-    """昨龙虎榜净卖出警示。只标注，不进 8 因子。"""
+    """昨龙虎榜净卖出警示。只标注，不进 7 因子。"""
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     out = {}
     for i in range(1, 6):
@@ -2073,7 +2532,7 @@ def lhb_warn_map():
 
 
 def youzi_annot(s, q, f, hist, flow, mood, lhb):
-    """表二加列：换手/竞价量/弱转强/超大单/题材板/龙虎 + 连板/昨ZT/板内/竞价额/换手市值。不改 8 因子分。"""
+    """表二加列：换手/竞价量/弱转强/超大单/题材板/龙虎 + 连板/昨ZT/板内/竞价额/换手市值。不改 7 因子分。"""
     hs = q.get("turnover") if q else None
     dd = f["dd"] if f else None
     if hs is None:
@@ -2240,15 +2699,22 @@ def left_setup(s, q, f, yld, hist, flow, idx_weak=False):
     o, p, prev = q["open"], q["px"], q["prev"]
     gap = (o / prev - 1) * 100 if prev else 0
 
-    oversold = (
-        (ma20 is not None and px < ma20 and bias <= -5)
-        or bias <= -8
-        or (dd is not None and dd <= -0.15)
-        or (rsi_v is not None and rsi_v <= 38)
-        or yld
-        or downs >= 4
-    )
-    if not oversold:
+    # 超跌要多信号共振。原来是「任意一条成立」就进池，单一个 RSI 38 就能把
+    # 下跌中继当成左侧机会；现在要 2 条以上同时成立。
+    os_bits = []
+    if ma20 is not None and px < ma20 and bias <= -5:
+        os_bits.append("破MA20且乖离")
+    if bias <= -8:
+        os_bits.append("乖离深")
+    if dd is not None and dd <= -0.15:
+        os_bits.append("距高远")
+    if rsi_v is not None and rsi_v <= 38:
+        os_bits.append("RSI低")
+    if yld:
+        os_bits.append("昨跌停")
+    if downs >= 4:
+        os_bits.append("连阴")
+    if len(os_bits) < 2:
         return None
 
     loc = 0
@@ -2340,7 +2806,7 @@ def left_setup(s, q, f, yld, hist, flow, idx_weak=False):
     if atr:
         fail += f" / ATR{px - atr:.2f}"
 
-    if is_limit_up(s["code"], q["chg"]) or q["chg"] >= 7:
+    if overheat(s["code"], q["chg"], q.get("name")) in ("涨停", "见顶", "不追"):
         call, how = "不抄", "反弹过热，左侧不做"
     elif yld and gap >= 0.8 and p < o:
         call, how = "不抄", "昨跌停骗炮"
@@ -2357,11 +2823,13 @@ def left_setup(s, q, f, yld, hist, flow, idx_weak=False):
         else:
             call, how = "观察", "趋势超跌，等站回均价再试"
 
-    if call == "可试仓" and kind != "游资":
+    # 止跌确认对两条战法同一个标准。原来游资左侧只要翻红就能试仓，
+    # 趋势左侧却要 RSI 拐头/缩量再放量/二探，同一个「左侧超跌」两套安全线。
+    if call == "可试仓":
         if ma20_diving:
             call, how = "观察", "均线还在加速下跌，超跌钝化，只盯不抄"
         elif idx_weak:
-            call, how = "观察", "大盘偏弱，趋势左侧只盯不抄"
+            call, how = "观察", "大盘偏弱，左侧只盯不抄"
         elif not (rsi_ok or vol_ok or dbl_ok):
             call, how = "观察", "缺RSI拐头/缩量再放量/二探，未确认止跌"
 
@@ -2369,7 +2837,308 @@ def left_setup(s, q, f, yld, hist, flow, idx_weak=False):
         "score": score, "kind": kind, "call": call, "how": how,
         "loc": loc, "conf": conf, "bias": bias, "pos": pos, "factor": factor,
         "rsi": rsi_v, "dd": dd, "main": main, "fib": fib_retracement(hist, q),
-        "confirm": confirm_txt, "fail": fail,
+        "confirm": confirm_txt, "fail": fail, "oversold_bits": os_bits,
+    }
+
+
+# ---------- 判别滞后带：临界值升级要连续两次确认，降级立即生效 ----------
+GATE_PATH = os.path.join(ROOT, "reports", "gate_state.json")
+GATE_PREV = {}
+GATE_NOW = {}
+
+
+def gate_state_load():
+    global GATE_PREV
+    try:
+        blob = json.load(open(GATE_PATH, encoding="utf-8"))
+        today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
+        GATE_PREV = blob.get("codes") or {} if blob.get("date") == today else {}
+    except Exception:
+        GATE_PREV = {}
+
+
+def gate_state_save():
+    try:
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+        os.makedirs(os.path.dirname(GATE_PATH), exist_ok=True)
+        json.dump(
+            {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"), "codes": GATE_NOW},
+            open(GATE_PATH, "w", encoding="utf-8"), ensure_ascii=False,
+        )
+    except Exception:
+        pass
+
+
+def hysteresis(code, call, why, score=None, enter=None, hold=None):
+    """同一天里同一只票在阈值上反复翻转最伤胜率。
+    升级到可小仓：分数刚过线（enter~enter+5）要连续两次达标才放行；
+    已在可小仓：分数回落到 hold 以上仍维持，不因 0.1 分掉出去。
+    只作用于「分数未达标」这一类降级，回避/退潮/骗炮等硬否决不受影响。"""
+    prev = GATE_PREV.get(code) or {}
+    marginal = (
+        call == "可小仓" and score is not None and enter is not None and score < enter + 5
+    )
+    out_call, out_why = call, why
+    if marginal and not (prev.get("call") == "可小仓" or prev.get("marginal")):
+        out_call = "观察"
+        out_why = (why or "") + f"；{score:.0f}分刚过线，等下一次确认再动手"
+    elif (
+        call == "观察" and prev.get("call") == "可小仓"
+        and score is not None and hold is not None and score >= hold
+        and "未达标" in (why or "")
+    ):
+        out_call = "可小仓"
+        out_why = f"在滞后带内（{score:.0f}≥{hold:.0f}），维持可小仓不来回改口"
+    GATE_NOW[code] = {"call": out_call, "raw": call, "marginal": bool(marginal), "score": round(score or 0, 1)}
+    return out_call, out_why
+
+
+# ---------- 信号留档与复盘：闭环的那一环 ----------
+JOURNAL_DIR = os.path.join(ROOT, "reports", "journal")
+
+
+def _journal_file(date_s):
+    return os.path.join(JOURNAL_DIR, date_s[:7] + ".jsonl")
+
+
+def journal_load(months=3):
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    recs = []
+    seen_files = set()
+    for i in range(months):
+        m = (now - datetime.timedelta(days=31 * i)).strftime("%Y-%m")
+        fn = _journal_file(m + "-01")
+        if fn in seen_files or not os.path.isfile(fn):
+            continue
+        seen_files.add(fn)
+        for ln in open(fn, encoding="utf-8"):
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                recs.append(json.loads(ln))
+            except Exception:
+                continue
+    return recs
+
+
+def journal_record(rows, now):
+    """每次跑把判别留档。同一天同一只票同一结论只记一次，结论变了再记一条。"""
+    date_s, time_s = now.strftime("%Y-%m-%d"), now.strftime("%H:%M")
+    old = journal_load(1)
+    have = {(r.get("date"), r.get("code"), r.get("call")) for r in old}
+    new = []
+    for r in rows:
+        key = (date_s, r.get("code"), r.get("call"))
+        if key in have:
+            continue
+        have.add(key)
+        new.append({
+            "date": date_s, "time": time_s, "code": r.get("code"), "name": r.get("name"),
+            "kind": r.get("kind"), "call": r.get("call"), "line": r.get("line"),
+            "st": r.get("st"), "worth": round(r.get("score") or 0, 1),
+            "tape": round(r.get("tape") or 0, 1), "ma": round(r.get("ma") or 0, 1),
+            "px": r.get("px"), "chg": r.get("chg"), "auc": r.get("auc"),
+        })
+    if not new:
+        return 0
+    try:
+        os.makedirs(JOURNAL_DIR, exist_ok=True)
+        with open(_journal_file(date_s), "a", encoding="utf-8") as fh:
+            for r in new:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    except Exception:
+        return 0
+    return len(new)
+
+
+def _fwd_from(hist, date_s, px):
+    """信号当时的价 → 之后第1/3/5个交易日收盘。用已经抓下来的日线，不额外请求。"""
+    if not hist or not px:
+        return {}
+    idx = None
+    for i, b in enumerate(hist):
+        if b[0] > date_s:
+            idx = i
+            break
+    if idx is None:
+        return {}
+    out = {}
+    for tag, step in (("r1", 0), ("r3", 2), ("r5", 4)):
+        j = idx + step
+        if j < len(hist):
+            out[tag] = (hist[j][4] / px - 1) * 100
+    return out
+
+
+def journal_review(hist_by_code, days=30, cost_pct=0.1):
+    """按判别分桶算胜率和平均收益。这张表是用来改阈值的依据，不参与今天的闸。"""
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    today = now.strftime("%Y-%m-%d")
+    since = (now - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+    recs = [r for r in journal_load(3) if since <= (r.get("date") or "") < today]
+    buckets = {}
+    per_kind = {}
+    n_eval = 0
+    for r in recs:
+        hist = hist_by_code.get(r.get("code"))
+        if not hist:
+            continue
+        fwd = _fwd_from(hist, r["date"], r.get("px"))
+        if "r1" not in fwd:
+            continue
+        n_eval += 1
+        net1 = fwd["r1"] - cost_pct
+        for key, box in ((r.get("call") or "-", buckets), ((r.get("call") or "-") + "/" + (r.get("kind") or "-"), per_kind)):
+            b = box.setdefault(key, {"n": 0, "win": 0, "s1": 0.0, "s3": 0.0, "s5": 0.0, "n3": 0, "n5": 0})
+            b["n"] += 1
+            b["win"] += 1 if net1 > 0 else 0
+            b["s1"] += net1
+            if "r3" in fwd:
+                b["s3"] += fwd["r3"] - cost_pct
+                b["n3"] += 1
+            if "r5" in fwd:
+                b["s5"] += fwd["r5"] - cost_pct
+                b["n5"] += 1
+
+    def pack(box):
+        rows = []
+        for k, b in box.items():
+            if not b["n"]:
+                continue
+            rows.append({
+                "key": k, "n": b["n"], "win": b["win"] / b["n"] * 100,
+                "a1": b["s1"] / b["n"],
+                "a3": (b["s3"] / b["n3"]) if b["n3"] else None,
+                "a5": (b["s5"] / b["n5"]) if b["n5"] else None,
+            })
+        order = {"可小仓": 0, "可试仓": 1, "观察": 2, "不追": 3, "不买": 4}
+        rows.sort(key=lambda x: (order.get(x["key"].split("/")[0], 9), -x["n"]))
+        return rows
+
+    return {
+        "days": days, "n_rec": len(recs), "n_eval": n_eval,
+        "by_call": pack(buckets), "by_kind": pack(per_kind), "cost_pct": cost_pct,
+    }
+
+
+# ---------- 组合层：主线限仓 + 按止损距离反算仓位 ----------
+RISK_PATH = os.path.join(ROOT, "risk_config.json")
+RISK_DEFAULT = {
+    "capital": 100000,
+    "risk_pct": 1.0,        # 单笔愿意亏掉总资金的百分比
+    "max_total_pct": 60,    # 总仓上限
+    "max_line_pct": 25,     # 单条主线仓位上限
+    "max_name_pct": 20,     # 单票仓位上限
+    "max_per_line": 2,      # 同一条主线最多几只
+    "cost_pct": 0.1,        # 双边交易成本（印花税+佣金+过户费）
+}
+
+
+def load_risk_cfg():
+    cfg = dict(RISK_DEFAULT)
+    try:
+        cfg.update(json.load(open(RISK_PATH, encoding="utf-8")) or {})
+    except Exception:
+        pass
+    return cfg
+
+
+def portfolio_plan(cands, exits_by_code, cfg):
+    """把「可以买」变成「买多少」。
+    仓位 = 单笔风险额 ÷ 止损距离，再被单票/单主线/总仓三道上限压住；
+    同一条主线最多 max_per_line 只，避免 4 个名字其实是同一个赌注。"""
+    cap = float(cfg.get("capital") or 0)
+    risk_amt = cap * float(cfg.get("risk_pct") or 0) / 100.0
+    max_total = cap * float(cfg.get("max_total_pct") or 100) / 100.0
+    max_line = cap * float(cfg.get("max_line_pct") or 100) / 100.0
+    max_name = cap * float(cfg.get("max_name_pct") or 100) / 100.0
+    per_line = int(cfg.get("max_per_line") or 99)
+    cost = float(cfg.get("cost_pct") or 0)
+    plan, skipped = [], []
+    used_total = 0.0
+    used_line = {}
+    cnt_line = {}
+    for c in cands:
+        code, line, px = c.get("code"), c.get("line") or "其他", c.get("px") or 0
+        ex = exits_by_code.get(code) or {}
+        sl = ex.get("sl")
+        if not px or not sl or sl >= px:
+            skipped.append({**c, "reason": "没有有效止损位，不给仓位"})
+            continue
+        if cnt_line.get(line, 0) >= per_line:
+            skipped.append({**c, "reason": f"{line}已占满{per_line}只，同线不再加"})
+            continue
+        stop_dist = px - sl
+        tp1 = ex.get("tp1")
+        net_rr = None
+        if tp1 and tp1 > px:
+            net_rr = (tp1 - px - px * cost / 100) / (stop_dist + px * cost / 100)
+        # 扣掉成本后盈亏比太差就不该给仓位。这种多半是没有有效结构位、
+        # 止损只能用固定百分比顶上，说明当前位置本身不好，不是仓位问题。
+        if net_rr is not None and net_rr < 1.2:
+            skipped.append({**c, "reason": f"净盈亏比仅{net_rr:.1f}（<1.2），位置不好不给仓位"})
+            continue
+        want = risk_amt / stop_dist * px if stop_dist > 0 else 0
+        room_name = max_name
+        room_line = max_line - used_line.get(line, 0)
+        room_total = max_total - used_total
+        amt = min(want, room_name, room_line, room_total)
+        if amt <= 0 or room_line <= 0:
+            skipped.append({**c, "reason": f"{line}主线敞口已满" if room_line <= 0 else "总仓已满"})
+            continue
+        shares = int(amt / px / 100) * 100
+        if shares < 100:
+            skipped.append({
+                **c,
+                "reason": f"1手要{px*100:.0f}元，按{cfg.get('risk_pct')}%风险只放得下{amt:.0f}元，装不下1手",
+            })
+            continue
+        real = shares * px
+        used_total += real
+        used_line[line] = used_line.get(line, 0) + real
+        cnt_line[line] = cnt_line.get(line, 0) + 1
+        binding = "风险额"
+        if amt >= room_total - 1:
+            binding = "总仓上限"
+        elif amt >= room_line - 1:
+            binding = f"{line}主线上限"
+        elif amt >= room_name - 1:
+            binding = "单票上限"
+        plan.append({
+            **c,
+            "shares": shares, "amt": real, "pct": real / cap * 100 if cap else 0,
+            "sl": sl, "tp1": tp1, "stop_pct": (sl / px - 1) * 100,
+            "risk_amt": shares * stop_dist, "risk_pct_real": shares * stop_dist / cap * 100 if cap else 0,
+            "net_rr": net_rr, "binding": binding,
+        })
+    line_share = {
+        k: v / used_total * 100 for k, v in used_line.items()
+    } if used_total else {}
+    warn = []
+    for k, v in sorted(line_share.items(), key=lambda x: -x[1]):
+        if v >= 60 and len(line_share) > 1:
+            warn.append(f"{k}占计划仓位{v:.0f}%，这不是{len(plan)}个标的，是1个赌注")
+    # 过闸名单本身的集中度。计划仓位可能因资金/盈亏比被挡住而看不出来，
+    # 但「可以买」列了一串同主线的票，本质还是一个方向的重复下注。
+    cand_line = {}
+    for c in cands:
+        if c.get("call") == "可小仓":
+            cand_line[c.get("line") or "其他"] = cand_line.get(c.get("line") or "其他", 0) + 1
+    n_cand = sum(cand_line.values())
+    if n_cand >= 3:
+        for k, v in sorted(cand_line.items(), key=lambda x: -x[1]):
+            if v / n_cand >= 0.5 and v >= 2:
+                warn.append(
+                    f"过闸的 {n_cand} 只里有 {v} 只是{k}，同一个方向。真要做也只当 1 笔，"
+                    f"按同主线最多{per_line}只执行"
+                )
+                break
+    return {
+        "plan": plan, "skipped": skipped, "used_total": used_total,
+        "used_pct": used_total / cap * 100 if cap else 0,
+        "line_share": line_share, "warn": warn, "cfg": cfg,
+        "risk_amt": risk_amt,
     }
 
 
@@ -2383,7 +3152,7 @@ def name_call(s, q, f, yld):
         extra = "；昨跌停弱转强，仓更小"
     elif dt == "weak":
         extra = "；昨跌停次日偏弱"
-    if is_limit_up(s["code"], q["chg"]):
+    if is_limit_up(s["code"], q["chg"], q.get("name")):
         return "不追", "今涨停，空间见顶"
     if limit_open_dump(s, q):
         return "不买", "竞价涨停开后砸盘，出货不做"
@@ -2394,7 +3163,7 @@ def name_call(s, q, f, yld):
     ma20 = f.get("ma20")
     above_ma20 = bool(ma20) and px > ma20
     hot_rsi = f.get("rsi") is not None and f["rsi"] >= 70
-    vr = q.get("vol_ratio") or 0
+    vr = vr_norm(q.get("vol_ratio") or 0)
     red = q["chg"] < 0 or px < q["open"]
     vp = f.get("vp") or ""
     cap = trend_chg_cap(s["code"], f.get("atr_pct"))
@@ -2433,21 +3202,26 @@ SKIP_HOW = ("骗炮", "空间见顶", "涨停，", "结束/观察")
 
 
 def verdict_trend(s, q, f, yld, st):
-    """趋势仓最终买点。不改 name_call。"""
+    """趋势仓最终买点。不改 name_call。过线后加滞后带，避免同日反复改口。"""
     call, why = name_call(s, q, f, yld)
     if call == "可小仓" and st == "回避":
         return "观察", "主线回避"
+    ent = (f or {}).get("entry")
+    if call in ("可小仓", "观察") and ent:
+        return hysteresis(s["code"], call, why, ent, 55, 48)
     return call, why
 
 
 def verdict_youzi(s, q, f, yld, yz, st, mood, late):
-    """游资仓最终买点。和总判同一套闸，表一看这一列就能下结论。"""
+    """游资仓最终买点。和总判同一套闸，表一看这一列就能下结论。
+    换手/量比改用时段归一值：10:00 的 5% 换手按全天折算才和 14:30 的 5% 可比。"""
     how = (yz or {}).get("how") or ""
     sc = (yz or {}).get("score") or 0
     if yday_dt_shape(q, yld) == "trap":
         return "不买", "昨跌停骗炮"
-    if is_limit_up(s["code"], q["chg"]) or q["chg"] >= 7:
-        return "不追", "涨停/过热"
+    oh = overheat(s["code"], q["chg"], q.get("name"))
+    if oh in ("涨停", "见顶", "不追"):
+        return "不追", f"今涨{q['chg']:+.1f}% {oh}，不追"
     if limit_open_dump(s, q):
         return "不买", "竞价涨停开后砸盘，出货不做"
     if mood.get("phase") == "退潮":
@@ -2455,27 +3229,30 @@ def verdict_youzi(s, q, f, yld, yz, st, mood, late):
     if any(k in how for k in SKIP_HOW):
         return "不买", how
     if sc < 65:
-        return "观察", f"7a {sc:.0f}未达标"
+        return hysteresis(s["code"], "观察", f"7a {sc:.0f}未达标", sc, 65, 60)
     if st == "回避":
         return "观察", "主线回避"
-    hs = q.get("turnover")
-    vr = q.get("vol_ratio") or 0
+    hs = hs_proj(q.get("turnover"))
+    vr = vr_norm(q.get("vol_ratio") or 0)
     if not ((hs is not None and hs >= 5) or vr >= 1.5):
-        return "观察", "换手/量比不够"
+        return "观察", f"换手/量比不够（全天折算换手{hs:.1f}%、归一量比{vr:.2f}）" if hs is not None else "换手/量比不够"
     if late:
-        return "观察", "尾盘不新开"
-    return "可小仓", how
+        return "观察", "尾盘/收盘后不新开"
+    return hysteresis(s["code"], "可小仓", how, sc, 65, 60)
 
 
-def limit_price(prev, code):
+def limit_price(prev, code, name=None):
     if not prev:
         return None
-    return round(prev * (1 + board_limit_pct(code) / 100.0) + 1e-8, 2)
+    return round(prev * (1 + board_limit_pct(code, name) / 100.0) + 1e-8, 2)
 
 
-def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False):
+def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False,
+               zt_y=None, zt_t=None):
     """近7日打板战法。游资习惯：主线+换手板+一进二/弱转强，不打今涨停、一字、退潮、回避。
-    不改 7a 公式；打板仓用本套分，游资仓仍要 7a≥65。"""
+    本轮改动：昨板质量（封单额/封成比/开板次数/是否一字）从东财涨停池取真值，
+    一进二不再只看「昨涨停+今高开」；龙回头要求真的是板内龙头且缩量回踩均线；
+    弱转强要求昨天确实是烂板/炸板/断板。不改 7 因子公式；游资仓仍要 7a≥65。"""
     empty = {
         "in_pool": False, "score": 0, "setup": "非打板池", "call": "观察",
         "why": "近7日无涨停", "bits": [], "n7": 0, "n_lian": 0,
@@ -2485,7 +3262,12 @@ def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False):
     n7 = recent_zt(s, hist, n=7)
     n_lian = consec_zt(s["code"], hist)
     yday = yday_zt(s["code"], hist)
-    today_zt = is_limit_up(s["code"], q["chg"]) or q["chg"] >= 9.5
+    today_zt = is_limit_up(s["code"], q["chg"], q.get("name"))
+    yq = zt_quality((zt_y or {}).get(s["code"]))
+    tq = zt_quality((zt_t or {}).get(s["code"])) if today_zt else None
+    if (zt_y or {}).get(s["code"]):
+        yday = True
+        n_lian = max(n_lian, yq.get("lbc") or 1)
     if n7 < 1 and n_lian < 1 and not yday and not today_zt:
         return empty
     chg = q["chg"]
@@ -2517,29 +3299,85 @@ def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False):
             "why": "竞价涨停开后砸盘，出货不做", "bits": ["开后砸"], "n7": n7, "n_lian": n_lian,
         }
 
+    # 昨板质量：一字板不打（买不到也接不住），烂板降级，硬板才配一进二
+    yz_hard = yq.get("hard")
+    yz_yizi = yq.get("yizi")
+    yz_zbc = yq.get("zbc") or 0
+    if yq.get("tag") != "无记录":
+        bits.append("昨" + yq["tag"])
+    rank_txt = (f or {}).get("board_rank") or ""
+    rm = re.search(r"板内(\d+)/(\d+)", str(rank_txt))
+    pos, n_in = (int(rm.group(1)), int(rm.group(2))) if rm else (99, 0)
+    is_leader = pos <= 1 or (pos <= 2 and n_in >= 4)
+    ma5, ma10 = (f or {}).get("ma5"), (f or {}).get("ma10")
+    near_ma = any(m and abs(p / m - 1) <= 0.03 for m in (ma5, ma10))
+    vr_n = vr_norm(vr)
+    shrink = vr_n < 0.9
+
     setup = "打板观察"
     if today_zt:
         setup = "今板不追"
-    elif yday and n_lian == 1 and 2.5 <= gap <= 7.5:
+    elif yz_yizi:
+        setup = "昨一字不打"
+        score -= 12
+        bits.append("昨一字/秒板，排不到也接不住")
+    elif yday and n_lian == 1 and 3.0 <= gap <= 7.0 and yz_hard is not False and p >= o * 0.995:
         setup = "一进二"
         score += 14
-        bits.append("昨首板今高开3-7%")
-    elif yday and n_lian == 1 and -3.2 <= gap <= -0.3 and chg > 0.4 and p > o:
+        bits.append("昨首板(非烂板)今高开3-7%且站住开盘")
+    elif yday and n_lian == 1 and 2.5 <= gap <= 7.0 and p < o * 0.995:
+        # 高开后跌破开盘就不是一进二，是高开低走
+        setup = "昨首板高开低走"
+        score -= 10
+        bits.append("高开后破开盘价，接力失败")
+    elif yday and n_lian == 1 and 2.5 <= gap < 3.0:
+        setup = "一进二(开口偏小)"
+        score += 6
+        bits.append("昨首板今高开不足3%")
+    elif yday and n_lian == 1 and -3.2 <= gap <= -0.3 and chg > 0.4 and p > o and (yz_zbc >= 1 or yz_hard is False):
         setup = "弱转强"
-        score += 12
-        bits.append("昨首板低开翻红")
+        score += 14
+        bits.append("昨烂板/炸板今低开翻红站开盘")
+    elif yday and n_lian == 1 and -3.2 <= gap <= -0.3 and chg > 0.4 and p > o:
+        setup = "低开翻红(昨板不弱)"
+        score += 5
+        bits.append("昨板不算弱，低开翻红只算普通接力")
     elif yday and n_lian >= 2 and chg < 7:
-        setup = "连板回抽"
-        score += 4
+        setup = "二进三" if n_lian == 2 else "高位板回抽"
+        score += 6 if n_lian == 2 else -6
         bits.append(f"昨{n_lian}连板回抽")
-    elif n7 >= 2 and not yday:
+    elif n7 >= 2 and not yday and is_leader and near_ma and shrink and 0 <= chg < 5:
         setup = "龙回头"
-        score += 3
-        bits.append(f"近7日{n7}板断板回抽")
+        score += 10
+        bits.append(f"板内{pos}位、缩量回踩均线")
+    elif n7 >= 2 and not yday:
+        setup = "断板回抽(非龙头/未回均线)"
+        score -= 4
+        bits.append(f"近7日{n7}板但{'非板内龙头' if not is_leader else '未缩量回均线'}")
     elif yday:
         setup = "昨板接力"
         score += 5
         bits.append("昨涨停待确认")
+
+    # 今天自己封住了的话，看封单硬不硬（只影响描述和分，今板依旧不追）
+    if tq and tq.get("tag") != "无记录":
+        bits.append("今" + tq["tag"])
+
+    # 空间压制：接近市场最高板的位置，胜率结构性变差
+    mk_high = (mood or {}).get("high") or 0
+    if mk_high and n_lian + 1 >= mk_high and n_lian >= 2:
+        score -= 10
+        bits.append(f"要打的是市场最高板附近({n_lian+1}/{mk_high})")
+
+    # 赚钱效应：昨板今天整体亏钱，打板直接降级
+    env = (mood or {}).get("env") or {}
+    if env.get("prem") is not None:
+        if env["prem"] <= -1.5:
+            score -= 18
+            bits.append(f"昨板今均{env['prem']:+.1f}%，亏钱效应")
+        elif env["prem"] >= 1.5 and (env.get("adv") or 0) >= 15:
+            score += 8
+            bits.append(f"昨板今均{env['prem']:+.1f}%/晋级{env['adv']:.0f}%")
 
     if nzt >= 3:
         score += 12
@@ -2631,17 +3469,19 @@ def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False):
         score -= 10
         bits.append("价涨资金出")
 
-    if phase == "高潮":
-        score += 6
-    elif phase in ("发酵", "启动"):
+    if phase == "发酵":
+        score += 8
+    elif phase == "高潮":
         score += 4
+    elif phase == "修复":
+        score += 2
     elif phase == "退潮":
         score -= 20
         bits.append("情绪退潮")
 
-    if room < 1:
+    if room < cap * 0.1:
         score -= 18
-    elif room >= 3:
+    elif room >= cap * 0.3:
         score += 3
 
     if vwap:
@@ -2657,24 +3497,32 @@ def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False):
     score = int(clip(score, 0, 100))
 
     call, why = "观察", "打板分不够或形态未确认，只盯不打"
-    if today_zt or chg >= 7:
+    oh_d = overheat(s["code"], chg, q.get("name"))
+    if today_zt or oh_d in ("见顶", "不追"):
         call, why = "不追", "今涨停/过热不追，等回抽或次日竞价"
     elif phase == "退潮":
         call, why = "观察", "情绪退潮，打板空仓"
+    elif env.get("ok") is False:
+        call, why = "观察", f"赚钱效应差（{env.get('txt') or '昨板今日弱'}），打板不新开"
     elif st == "回避":
         call, why = "观察", "主线回避，不打支线杂毛"
     elif late:
-        call, why = "观察", "14:30后打板不新开"
-    elif setup in ("一进二", "弱转强") and score >= 75 and room >= 1.5:
+        call, why = "观察", "14:30后/收盘后打板不新开"
+    elif yz_yizi:
+        call, why = "观察", "昨一字板，次日不打"
+    elif setup in ("一进二", "弱转强") and score >= 75 and room >= cap * 0.15:
         call, why = "可小仓", f"{setup}达标，小仓排队/回封，不追尖"
-    elif setup == "龙回头" and score >= 80 and 0 <= chg < 5:
-        call, why = "可小仓", "断板回抽转强，轻仓试，破今日低走"
+    elif setup == "龙回头" and score >= 80:
+        call, why = "可小仓", "板内龙头缩量回踩均线转强，轻仓试，破今日低走"
     else:
         why = "；".join(bits[:4]) or why
+    if call == "可小仓":
+        call, why = hysteresis(s["code"] + ":db", call, why, score, 75, 70)
 
     return {
         "in_pool": True, "score": score, "setup": setup, "call": call,
         "why": why, "bits": bits, "n7": n7, "n_lian": n_lian,
+        "yq": yq, "tq": tq, "leader_pos": pos,
         "factor": "；".join(bits[:6]) or "-",
     }
 
@@ -2721,9 +3569,11 @@ def trade_exits(s, q, f, kind="游资", setup="", hist=None):
     if not q:
         return None
     etf = kind == "ETF" or s.get("asset") == "etf" or "ETF" in (s.get("name") or "")
-    daban = kind == "打板" or setup in ("一进二", "弱转强", "龙回头", "连板回抽", "昨板接力")
+    daban = kind == "打板" or (setup or "").startswith(("一进二", "弱转强", "龙回头", "二进三", "连板回抽", "昨板接力"))
     if etf:
         style = "ETF"
+    elif kind == "左侧" or setup == "左侧":
+        style = "左侧"
     elif kind == "游资" or daban:
         style = "游资"
     else:
@@ -2734,7 +3584,7 @@ def trade_exits(s, q, f, kind="游资", setup="", hist=None):
     low = q.get("low") or px
     atrp = (f or {}).get("atr_pct") or (2.0 if etf else 3.0)
     atr = px * (atrp / 100.0)
-    lim = limit_price(prev, s["code"]) if prev else None
+    lim = limit_price(prev, s["code"], q.get("name")) if prev else None
     key = (f or {}).get("vwap_key_low")
     cm = is_20cm(s["code"])
     room = ((lim / px) - 1) if lim and px else None
@@ -2757,10 +3607,24 @@ def trade_exits(s, q, f, kind="游资", setup="", hist=None):
         return sl, lab
 
     cands = []
-    if style == "游资":
-        min_pct = 0.03 if daban else 0.028
-        hard_pct = 0.055 if daban else (0.07 if cm else 0.045)
-        max_pct = 0.08 if (daban or cm) else 0.055
+    if style == "左侧":
+        # 左侧的失败定义本来就是「破今日低」，不能套游资/打板的均线止损，
+        # 否则报告上写的止损和左侧战法自己的出场条件不是一回事。
+        min_pct, hard_pct, max_pct = 0.025, 0.05, 0.07
+        if low and low < px:
+            cands.append((low * 0.997, "破今日低（左侧失败）"))
+        if lv.get("lo10"):
+            cands.append((lv["lo10"] * 0.997, "破10日低"))
+        cands.append((px - 1.5 * atr, "1.5×ATR"))
+        cands.append((px * (1 - hard_pct), f"左侧亏{hard_pct * 100:.0f}%"))
+        sl, lab = pick_sl(cands, min_pct, hard_pct, max_pct, f"左侧亏{hard_pct * 100:.0f}%")
+        tp1_floor, tp2_pct, r_mult = 0.05, 0.10, 2.0
+        tp_note = "左侧反弹先看MA10/MA20或昨高，是反弹不是反转，到位先减"
+    elif style == "游资":
+        min_pct = (0.045 if cm else 0.03) if daban else 0.028
+        # 20cm 打板日内波动 15%~25%，5.5% 的硬止损在噪音里，必须放宽并靠仓位控风险
+        hard_pct = (0.085 if cm else 0.055) if daban else (0.07 if cm else 0.045)
+        max_pct = (0.12 if cm else 0.08) if daban else (0.08 if cm else 0.055)
         if low and low < px:
             cands.append((low * 0.997, "破今日低"))
         if lv.get("yday_l"):
@@ -2774,7 +3638,7 @@ def trade_exits(s, q, f, kind="游资", setup="", hist=None):
         cands.append((px - 2.0 * atr, "2×ATR"))
         cands.append((px * (1 - hard_pct), f"短线亏{hard_pct * 100:.0f}%"))
         sl, lab = pick_sl(cands, min_pct, hard_pct, max_pct, f"短线亏{hard_pct * 100:.0f}%")
-        tp1_floor, tp2_pct, r_mult = (0.055, 0.10, 2.0) if daban else (
+        tp1_floor, tp2_pct, r_mult = ((0.09, 0.18, 2.0) if cm else (0.055, 0.10, 2.0)) if daban else (
             (0.06, 0.12, 2.0) if cm else (0.05, 0.08, 2.0)
         )
         tp_note = "第一目标看昨高/10日高或2倍风险，余仓看到20日高或涨停"
@@ -2984,7 +3848,8 @@ def hand_of(call):
 
 
 def heat_pts_of(st, line, heat_map):
-    """主线热度只认本线主力，不借光通信/电子的钱给液冷、光纤、PCB。"""
+    """主线热度只认本线主力，不借光通信/电子的钱给液冷、光纤、PCB。
+    别名 _heat_pts_of 给主流程用，保证批量报告和单股分析页同一套口径。"""
     h = {}
     if line in (heat_map or {}):
         h = heat_map[line]
@@ -3007,6 +3872,7 @@ def heat_pts_of(st, line, heat_map):
 
 
 def line_status_of(s, doable, avoid):
+    """批量报告和单股分析共用这一份。ETF 走 ETF_LINE 重映射。"""
     line = line_of_board(s.get("board"))
     if s.get("asset") == "etf" or "ETF" in (s.get("name") or ""):
         line = ETF_LINE.get(s.get("name") or "", line or "ETF")
@@ -3021,7 +3887,15 @@ def line_status_of(s, doable, avoid):
     return "中性", line
 
 
+# 盘面分内部已经含「板块资金」和「竞价质量」的战法。值分里不能再整份加一遍
+TAPE_HAS_SECTOR_AUC = {"游资", "打板", "ETF"}
+
+
 def worth_pts(call, kind, st, line, tape, auc_call=None, ma_score=None, heat_map=None):
+    """值分 = 闸 + 主线热 + 盘面×0.28 + 均线分×0.18 + 竞价。
+    去重：游资/打板/ETF 的盘面分（7a/打板分）里已经含板块资金和竞价质量，
+    这里主线热度只按 0.45 计、竞价不再重复加；趋势用的是买点分，不含这两项，全额计。
+    不这么做，同一条信息会在值分里算两到三次，游资/打板被系统性抬高，排序失真。"""
     hp, htag = heat_pts_of(st, line, heat_map or {})
     cp = {"可小仓": 50, "可试仓": 24, "观察": 18}.get(call, 0)
     kp = 0
@@ -3029,9 +3903,16 @@ def worth_pts(call, kind, st, line, tape, auc_call=None, ma_score=None, heat_map
         kp = {"趋势": 8, "游资": 5, "打板": 7, "ETF": 2}.get(kind, 0)
     elif call == "可试仓":
         kp = 1
-    ap = auction_pts(auc_call)
+    dedup = kind in TAPE_HAS_SECTOR_AUC
+    hp_eff = hp * 0.45 if dedup else hp
+    ap = 0 if dedup else auction_pts(auc_call)
     ma = clip(ma_score or 0, 0, 100)
-    return cp + kp + hp + 0.28 * (tape or 0) + 0.18 * ma + ap, htag, ap
+    return cp + kp + hp_eff + 0.28 * (tape or 0) + 0.18 * ma + ap, htag, ap
+
+
+_line_status_of = line_status_of
+_heat_pts_of = heat_pts_of
+_worth_pts = worth_pts
 
 
 def infer_market(code):
@@ -3263,9 +4144,15 @@ def analyze_one(code, board="自选", kind_hint=""):
         or "基金" in name
         or code.startswith(("15", "51", "56", "58", "16"))
     )
+    # 已在自选里的票，用自选登记的板块，否则主线判定和板块同向都会落到「自选」这个假板块上
+    wl_board = ""
+    for x in (WL.get("stocks") or []) + (WL.get("etfs") or []):
+        if x.get("code") == code:
+            wl_board = x.get("board") or ""
+            break
     s = {
         "code": code, "market": market, "name": name,
-        "board": "ETF" if is_etf else (board or "自选"),
+        "board": "ETF" if is_etf else (wl_board or board or "自选"),
         "asset": "etf" if is_etf else "stock",
     }
     try:
@@ -3278,8 +4165,9 @@ def analyze_one(code, board="自选", kind_hint=""):
         minutes = tencent_minute(s)
     except Exception:
         minutes = []
+    gate_state_load()
     ran("分时", bool(minutes), f"{len(minutes)}点" if minutes else "缺")
-    fac = score_row(hist, q) if hist and q else None
+    fac = score_row(hist, q, s["code"]) if hist and q else None
     ran("均线分", bool(fac))
     if not fac:
         return {"ok": False, "error": "日线不足，暂时分析不了", "modules": mods,
@@ -3321,17 +4209,55 @@ def analyze_one(code, board="自选", kind_hint=""):
     ran("买点分", fac.get("entry") is not None)
     fac["auction"] = auction_judge(s, q, fac, hist, yld)
     ran("集合竞价", bool((fac.get("auction") or {}).get("call")))
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    zt_t_rows, zt_y_rows = [], []
     try:
-        mood = market_mood()
+        zt_t_rows = zt_pool()
+        zt_y_rows = zt_pool(prev_trade_date_str(now, hist))
+    except Exception:
+        pass
+    try:
+        env = daban_env(zt_y_rows)
+    except Exception:
+        env = {}
+    try:
+        mood = market_mood(zt_t_rows, env)
     except Exception:
         mood = {"phase": "不明"}
     ran("情绪", bool(mood.get("phase") and mood.get("phase") != "不明"), mood.get("phase") or "")
-    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    ran("涨停池", bool(zt_t_rows or zt_y_rows), f"今{len(zt_t_rows)}/昨{len(zt_y_rows)}")
     late = now.hour > 14 or (now.hour == 14 and now.minute >= 30)
-    board_heat = {}
+    # 板块热度要和批量报告同一个口径：统计自选里同板块的票有几只在涨且主力净进。
+    # 过去这里只放当前这一只（样本=1），7a 的「个股热钱同向」那一档永远不可能触发，
+    # 同一只票在网页和报告上 7a 分数会差几分，刚好能跨过 65 那条线。
     b = s.get("board") or ""
-    up = 1 if q["chg"] > 0 and (flow.get("main") or 0) > 0 else 0
-    board_heat[b] = (up, 1)
+    peers = [x for x in (WL.get("stocks") or []) if (x.get("board") or "") == b]
+    if all(x.get("code") != code for x in peers):
+        peers = peers + [{"code": code, "market": s.get("market") or infer_market(code), "board": b}]
+    up, n_b = 0, 0
+    pq = {}
+    try:
+        pq = tencent([("sh" if (x.get("market") or infer_market(x["code"])) == "sh" else "sz") + x["code"]
+                      for x in peers]) if len(peers) > 1 else {}
+    except Exception:
+        pq = {}
+    pflow = {}
+    try:
+        pflow = stock_flow(peers) if len(peers) > 1 else {}
+    except Exception:
+        pflow = {}
+    for x in peers:
+        pqq = pq.get(x["code"]) if x["code"] != code else q
+        if not pqq:
+            continue
+        n_b += 1
+        mf = (pflow.get(x["code"]) or (flow if x["code"] == code else {}) or {}).get("main") or 0
+        if pqq["chg"] > 0 and mf > 0:
+            up += 1
+    if not n_b:
+        up, n_b = (1 if q["chg"] > 0 and (flow.get("main") or 0) > 0 else 0), 1
+    board_heat = {b: (up, n_b)}
+    ran("板块同向", n_b > 0, f"{up}/{n_b}只同向")
     yz = youzi_score(s, q, fac, yld, flow, inn_lines, out_lines, board_heat, hist) if q else {}
     kind = "ETF" if is_etf else stock_kind(s, q, hist)
     st, line = line_status_of(s, doable, avoid)
@@ -3360,6 +4286,10 @@ def analyze_one(code, board="自选", kind_hint=""):
         try:
             ls = left_setup(s, q, fac, yld, hist, flow, idx_weak)
             if ls:
+                # 和批量报告同一套：板块在出钱时，左侧只盯不抄
+                if ls["call"] == "可试仓" and st == "回避" and ls.get("kind") != "游资":
+                    ls["call"] = "观察"
+                    ls["how"] = "超跌够了，板块资金还在出，只盯不抄"
                 left = {"call": ls.get("call"), "how": ls.get("how"), "score": ls.get("score")}
         except Exception:
             left = None
@@ -3368,7 +4298,8 @@ def analyze_one(code, board="自选", kind_hint=""):
     ran("值分", True, f"{sc:.0f}")
     db = {}
     if not is_etf:
-        db = daban_plan(s, q, fac, hist, yz, st, line, mood, late, yld)
+        db = daban_plan(s, q, fac, hist, yz, st, line, mood, late, yld,
+                        zt_map(zt_y_rows), zt_map(zt_t_rows))
         if db.get("call") == "可小仓" and call != "可小仓" and call not in ("不买", "不追"):
             call, why, kind = db["call"], db["why"], "打板"
             tape = db.get("score") or 0
@@ -3435,6 +4366,7 @@ def analyze_one(code, board="自选", kind_hint=""):
 def main():
     global WL
     WL = load_watchlist()
+    gate_state_load()
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     stocks, etfs, idx = WL["stocks"], WL["etfs"], WL["index"]
     extra = [
@@ -3527,7 +4459,7 @@ def main():
             minutes = tencent_minute(item)
         except Exception:
             minutes = []
-        fac = score_row(hist, q) if hist and q else None
+        fac = score_row(hist, q, item["code"]) if hist and q else None
         if fac:
             fac["_min"] = minutes
             fac["_raw"] = raw
@@ -3573,12 +4505,24 @@ def main():
     for code, h in bench_hist.items():
         lq = live.get(code)
         bench_r5s[code] = ret5(h, lq["px"] if lq else None)
+    zt_t_rows, zt_y_rows = [], []
     try:
-        mood = market_mood()
+        zt_t_rows = zt_pool()
+        zt_y_rows = zt_pool(prev_trade_date_str(now, idx_hist.get("000001")))
+    except Exception:
+        pass
+    zt_t, zt_y = zt_map(zt_t_rows), zt_map(zt_y_rows)
+    try:
+        db_env = daban_env(zt_y_rows, live)
+    except Exception:
+        db_env = {}
+    try:
+        mood = market_mood(zt_t_rows, db_env)
     except Exception:
         mood = {
             "phase": "不明", "n_zt": 0, "n_dt": 0, "n_20": 0,
             "note": "涨停统计暂缺", "by_board": {}, "txt": "情绪：暂缺",
+            "ladder": {}, "high": 0, "n_lian": 0, "env": db_env or {},
         }
     try:
         lhb = lhb_warn_map()
@@ -3685,49 +4629,21 @@ def main():
     hsi = live.get("HSI")
     nq = live.get("159941") or live.get("513100")
 
-    tech_lines = {"光通信", "PCB", "半导体", "算力硬件", "算力液冷", "电子元件", "消费电子"}
-    med_lines = {"创新药", "游资医药", "医疗", "中药", "医药"}
+    tech_lines = TECH_LINES
+    med_lines = MED_LINES
     doable, avoid = line_policy(inn_lines, out_lines)
     desk_lines = desk_lines_of(stocks, etfs)
     desk_avoid = avoid_for_desk(avoid, desk_lines)
     noise_out = [x for x in out_lines if x in NOISE_OUT]
-
-    def line_status_of(s):
-        line = line_of_board(s.get("board"))
-        if line in avoid:
-            return "回避", line
-        if line == "中药" and "医药" in doable:
-            return "中性", line
-        if line in doable:
-            return "可做", line
-        if line in med_lines and line != "中药" and "医药" in doable:
-            return "可做", line
-        return "中性", line
-
     heat_map = flow_heat_map(inn, outf)
 
-    def heat_of(line):
-        if line in heat_map:
-            return heat_map[line]
-        if line in med_lines:
-            for k in ("医药", "医疗", "医疗研发外包"):
-                if k in heat_map:
-                    return heat_map[k]
-        return {}
+    # 统一走模块级实现，删掉原来这里的同名副本：过去主流程用嵌套版（ETF 主线不重映射）、
+    # 单股分析页用模块版，同一只票两处结论会不一致。
+    def line_status_of(s):
+        return _line_status_of(s, doable, avoid)
 
     def heat_pts_of(st, line):
-        h = heat_of(line)
-        amt = h.get("amt") or 0
-        if st == "可做":
-            pts = 22 + clip(amt / 4.0, 0, 12)
-        elif st == "中性":
-            pts = 8 + clip(amt / 6.0, 0, 6)
-        else:
-            pts = clip(amt / 8.0, -8, 0)
-        tag = f"{line}/{st}"
-        if amt:
-            tag += f" 主力{amt:+.0f}亿"
-        return pts, tag
+        return _heat_pts_of(st, line, heat_map)
 
     left_ranked = []
     for s, q, f, yld, hist in rows:
@@ -3747,6 +4663,16 @@ def main():
     left_trend = [x for x in left_ranked if x[4]["kind"] != "游资"]
     left_youzi = [x for x in left_ranked if x[4]["kind"] == "游资"]
     left_try = [x[0]["name"] for x in left_ranked if x[4]["call"] == "可试仓"]
+    hist_by_code = {r[0]["code"]: r[4] for r in list(rows) + list(etf_rows)}
+    # 左侧票用左侧那套止损（失败=破今日低），不套游资/打板的均线止损
+    exits_left = {}
+    for s, q, f, yld, ls in left_ranked:
+        if ls.get("call") != "可试仓":
+            continue
+        ex = trade_exits(s, q, f, "左侧", "左侧", hist_by_code.get(s["code"]))
+        if ex:
+            exits_left[s["name"]] = ex
+            exits_left[s["code"]] = ex
 
     pick_lines = []
     can_small = []
@@ -3887,7 +4813,11 @@ def main():
         line_block.append("主线上的筛选票：无")
 
     tmin = now.hour * 60 + now.minute
-    late_youzi = 14 * 60 + 30 <= tmin <= 15 * 60
+    # 14:30 之后一律算尾盘，收盘后更不能开新仓。
+    # 原来上界卡在 15:00，导致收盘后跑的报告把游资票重新标成「可小仓」，
+    # 而单股分析页同一只票显示「尾盘不新开」，两处对不上。
+    late_youzi = tmin >= 14 * 60 + 30
+    after_close = tmin >= 15 * 60
     verdicts = {}
     daban_by_code = {}
     for s, q, f, yld, hist in rows:
@@ -3896,7 +4826,7 @@ def main():
         kind = stock_kind(s, q, hist)
         st, line = line_status_of(s)
         yz = yz_by_code.get(s["code"])
-        db = daban_plan(s, q, f, hist, yz, st, line, mood, tmin >= 14 * 60 + 30, yld)
+        db = daban_plan(s, q, f, hist, yz, st, line, mood, late_youzi, yld, zt_y, zt_t)
         if db.get("in_pool"):
             daban_by_code[s["code"]] = db
         if kind == "游资":
@@ -3954,8 +4884,11 @@ def main():
             youzi_ok.append((s["name"], q["px"], q["chg"], yz["score"], line, st, why))
         elif yz["score"] >= 65 and call != "不追":
             youzi_no.append(f"{s['name']} 7a {yz['score']:.0f}分 {why}")
-    if late_youzi and youzi_ok:
-        youzi_no.append("14:30后到收盘，游资只续不新开（7a分不改，仍列出备选）")
+    if late_youzi:
+        youzi_no.append(
+            ("收盘后，游资/打板不新开，这份只当次日预案" if after_close
+             else "14:30后游资只续不新开（7a分不改，仍列出备选）")
+        )
     etf_ok = []
     for s, q, f, yld, yz in etf_yz:
         call, why = verdict_etf(q, yz)
@@ -3979,8 +4912,8 @@ def main():
             exits_by_name[s["name"]] = ex
             exits_by_name[s["code"]] = ex
 
-    def xit(name):
-        e = exits_by_name.get(name)
+    def xit(name, left=False):
+        e = (exits_left.get(name) if left else None) or exits_by_name.get(name)
         if not e:
             return "-", "-"
         nd = int(e.get("nd") or 2)
@@ -4024,20 +4957,25 @@ def main():
     buy_bits.extend(x[0] for x in youzi_ok if x[0] not in buy_bits)
     buy_bits.extend(x[0] for x in etf_ok)
     buy_line = "、".join(buy_bits) if buy_bits else "没有。不开新仓"
+    # 左侧可试仓本来就在第0节表里列着，却不进「可以买」，两处对不上。
+    # 现在单列出来，标清是轻仓试不是过闸。
+    left_names = [x.split()[0] for x in left_ok]
+    if left_names:
+        buy_line += f"；左侧轻仓试：{'、'.join(left_names[:4])}"
+    # 第14节「综合结论」过去只用趋势池的 name_call 推，游资/打板/ETF 过闸的票抬不动它，
+    # 于是同一份报告第0节说「可以买」、第14节说「不买」。现在统一用同一批过闸名单。
+    if buy_bits:
+        buy_today = "可小仓"
+        buy_reason.append("综合结论与第0节同一套闸：过闸的是 " + "、".join(buy_bits))
+    elif left_names:
+        buy_today = "观察"
+        buy_reason.append("综合结论：只有左侧可轻仓试，不算过闸，不开主仓")
+    else:
+        buy_today = "不买"
+        buy_reason.append("综合结论：今天没有票过闸，不开新仓")
 
     def worth_pts(call, kind, st, line, tape, auc_call=None, ma_score=None):
-        """值分=闸+主线热+盘面(趋势买点分/游资7a/ETF因子)×0.28+均线分×0.18+竞价。
-        均线分只作轻量参考，不能靠它把不买翻成可买。买点分不重复加（趋势盘面项已含）。"""
-        hp, htag = heat_pts_of(st, line)
-        cp = {"可小仓": 50, "可试仓": 24, "观察": 18}.get(call, 0)
-        kp = 0
-        if call == "可小仓":
-            kp = {"趋势": 8, "游资": 5, "打板": 7, "ETF": 2}.get(kind, 0)
-        elif call == "可试仓":
-            kp = 1
-        ap = auction_pts(auc_call)
-        ma = clip(ma_score or 0, 0, 100)
-        return cp + kp + hp + 0.28 * (tape or 0) + 0.18 * ma + ap, htag, ap
+        return _worth_pts(call, kind, st, line, tape, auc_call, ma_score, heat_map)
 
     def role_of(call, st):
         if call == "可小仓":
@@ -4096,14 +5034,65 @@ def main():
         auc_call = ((f or {}).get("auction") or {}).get("call")
         ma_score = (f or {}).get("buy") or 0
         record_worth(s["code"], s["name"], "ETF", q, call, why, line, st, tape, f"ETF {tape:.0f}", auc_call, ma_score)
+    # 左侧可试仓过去不进值分表，于是备选池里永远看不到它们
+    for s, q, f, yld, ls in left_ranked:
+        if ls.get("call") != "可试仓":
+            continue
+        w = worth_by_code.get(s["code"])
+        if w and w["call"] == "可小仓":
+            continue
+        if w:
+            w["call"] = "可试仓"
+            w["role"] = "轻仓备选(左侧)"
+            w["why"] = ls.get("how") or w["why"]
+            w["tape_txt"] = f"左侧{ls.get('score') or 0:.0f}"
+        else:
+            st2, line2 = line_status_of(s)
+            record_worth(
+                s["code"], s["name"], "左侧", q, "可试仓", ls.get("how") or "左侧轻仓",
+                line2, st2, ls.get("score") or 0, f"左侧{ls.get('score') or 0:.0f}",
+                ((f or {}).get("auction") or {}).get("call"), (f or {}).get("buy") or 0,
+            )
     worth_all = list(worth_by_code.values())
-    worth_all.sort(key=lambda x: -x["score"])
+    worth_all.sort(key=lambda x: (-x["score"], x["name"]))
     for i, r in enumerate(worth_all, 1):
         r["rank"] = i
     top5 = [x for x in worth_all if x["call"] == "可小仓"][:5]
     alt_pool = [x for x in worth_all if x["call"] in ("观察", "可试仓")][:8]
     top5_line = "、".join(x["name"] for x in top5) if top5 else "没有"
     alt_line = "、".join(x["name"] for x in alt_pool) if alt_pool else "没有"
+
+    # ---- 组合层：把「可以买」变成「买多少」，并挡住同一条主线的重复下注 ----
+    risk_cfg = load_risk_cfg()
+    exits_all = dict(exits_by_name)
+    exits_all.update({k: v for k, v in exits_left.items()})
+    pf_cands = []
+    for x in top5:
+        pf_cands.append({
+            "code": x["code"], "name": x["name"], "kind": x["kind"],
+            "line": x["line"], "px": x["px"], "score": x["score"], "call": x["call"],
+        })
+    for x in worth_all:
+        if x["call"] == "可试仓" and all(c["code"] != x["code"] for c in pf_cands):
+            pf_cands.append({
+                "code": x["code"], "name": x["name"], "kind": x["kind"],
+                "line": x["line"], "px": x["px"], "score": x["score"], "call": x["call"],
+            })
+    pf = portfolio_plan(pf_cands, {k: v for k, v in exits_all.items() if len(str(k)) == 6}, risk_cfg)
+
+    # ---- 信号留档 + 复盘：这一轮判别写进日志，历史判别用已抓的日线回填收益 ----
+    try:
+        gate_state_save()
+    except Exception:
+        pass
+    try:
+        n_j = journal_record(worth_all, now)
+    except Exception:
+        n_j = 0
+    try:
+        review = journal_review(hist_by_code, 30, risk_cfg.get("cost_pct") or 0.1)
+    except Exception:
+        review = {}
 
     def wtxt(code):
         w = worth_by_code.get(code)
@@ -4188,8 +5177,8 @@ def main():
     for txt in left_ok[:4]:
         n0 += 1
         nm = txt.split()[0]
-        sl, tp = xit(nm)
-        lines.append(f"| 左侧 | {nm} | - | - | **可试仓** | 超跌 | 轻仓，不替代右侧 | {sl} | {tp} |")
+        sl, tp = xit(nm, left=True)
+        lines.append(f"| 左侧 | {nm} | - | - | **可试仓** | 超跌 | 轻仓，不替代右侧；失败=破今日低 | {sl} | {tp} |")
     if not n0:
         lines.append("| - | 没有 | - | - | **不买** | - | 不开新仓 | - | - |")
     lines.append("- 止盈止损叠四套主流方法，只取有效位：结构（今低/昨低/10日低）、均线（游资MA5/10，趋势MA20）、ATR吊灯（近高往下2～2.2倍ATR）、固定风险（主板大约4.5%～6%）。贴身均价/均线离开不够远不当止损。止盈先看昨高、10日高（至少约1.5～2倍风险），再看20日高或涨停。距涨停不足2.5个点不设碎止盈。估算不是下单。观察票只是预案。")
@@ -4221,6 +5210,74 @@ def main():
             lines.append(
                 f"| {i} | {r['name']} | {r['kind']} | {px} | {r['chg']:+.2f}% | **{r['call']}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
             )
+    # ---- 0c 组合与仓位 ----
+    cfgp = pf.get("cfg") or {}
+    lines.append("### 0c 组合与仓位（先定买多少，再谈买哪只）")
+    lines.append(
+        f"口径：单笔风险 {cfgp.get('risk_pct')}% = {pf.get('risk_amt', 0):.0f}元（总资金{cfgp.get('capital')}元），"
+        f"仓位=风险额÷止损距离；单票≤{cfgp.get('max_name_pct')}%、单主线≤{cfgp.get('max_line_pct')}%、"
+        f"总仓≤{cfgp.get('max_total_pct')}%、同主线最多{cfgp.get('max_per_line')}只。"
+        f"资金和比例改 risk_config.json。"
+    )
+    if pf.get("plan"):
+        lines.append("| 序 | 股票 | 仓 | 主线 | 价 | 止损 | 止损距 | 建议股数 | 金额 | 占总资金 | 实际风险 | 净盈亏比 | 受限于 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for i, r in enumerate(pf["plan"], 1):
+            nd = 3 if r["kind"] == "ETF" else 2
+            rr = f"{r['net_rr']:.1f}" if r.get("net_rr") else "-"
+            lines.append(
+                f"| {i} | {r['name']} | {r['kind']} | {r['line']} | {r['px']:.{nd}f} | {r['sl']:.{nd}f} | "
+                f"{r['stop_pct']:+.1f}% | {r['shares']} | {r['amt']:.0f} | {r['pct']:.1f}% | "
+                f"{r['risk_amt']:.0f}({r['risk_pct_real']:.2f}%) | {rr} | {r['binding']} |"
+            )
+        lines.append(
+            f"- 计划总仓 {pf['used_pct']:.1f}%（{pf['used_total']:.0f}元）；主线分布："
+            + "、".join(f"{k} {v:.0f}%" for k, v in sorted(pf["line_share"].items(), key=lambda x: -x[1]))
+        )
+    else:
+        lines.append("- 没有可下仓位的标的（没过闸或缺止损位）。")
+    for w in pf.get("warn") or []:
+        lines.append(f"- **集中度警告**：{w}")
+    if pf.get("skipped"):
+        lines.append(
+            "- 被组合层挡住：" + "；".join(f"{x['name']}（{x['reason']}）" for x in pf["skipped"][:6])
+        )
+    lines.append(
+        "- 净盈亏比=(第一目标-现价-成本)÷(止损距离+成本)，已扣双边成本约{:.2f}%。".format(cfgp.get("cost_pct") or 0.1)
+        + "低于1.2的直接不给仓位：那通常是没有有效结构位、止损只能用固定百分比顶上，说明这个位置本身不好，不是仓位大小的问题。"
+    )
+
+    # ---- 0d 信号复盘 ----
+    rv = review or {}
+    lines.append(f"### 0d 信号复盘（近{rv.get('days', 30)}日留档，判别是否真的有用）")
+    if rv.get("n_eval"):
+        lines.append(
+            f"口径：留档 {rv['n_rec']} 条、已可评估 {rv['n_eval']} 条；"
+            f"从信号当时价算到之后第1/3/5个交易日收盘，已扣成本{rv.get('cost_pct')}%。"
+        )
+        lines.append("| 判别 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
+        lines.append("|---|---|---|---|---|---|")
+        for r in rv.get("by_call") or []:
+            a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
+            a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
+            lines.append(
+                f"| **{r['key']}** | {r['n']} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
+            )
+        by_kind = [r for r in (rv.get("by_kind") or []) if r["key"].startswith(("可小仓", "可试仓"))]
+        if by_kind:
+            lines.append("| 判别/战法 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
+            lines.append("|---|---|---|---|---|---|")
+            for r in by_kind[:8]:
+                a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
+                a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
+                lines.append(
+                    f"| {r['key']} | {r['n']} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
+                )
+        lines.append("- 看法：可小仓的次日胜率和均收要明显高于观察，否则闸没有区分度；某个战法长期为负就该关掉它，而不是继续调参。样本少于20条先别下结论。")
+    else:
+        lines.append(f"- 今天开始留档（本次新增 {n_j} 条）。要等隔一个交易日才有可评估样本，之后这里会出胜率表。")
+    lines.append("- 复盘只用来改阈值，不参与今天的判别。")
+
     trend_watch = [f"{s['name']}" for s, q, f, yld in ranked if verdicts.get(s["code"], ("",))[0] == "观察"]
     yz_watch = [f"{s['name']}" for s, q, f, yld, yz in yz_youzi if verdicts.get(s["code"], ("",))[0] == "观察" and yz["score"] >= 60]
     if trend_watch:
@@ -4238,9 +5295,19 @@ def main():
         lines.append("- 高分但不买：" + "；".join(high_no) + "。分高≠能买")
     lines.append("- 能不能买以第0节「可以买/买点」为准。TOP5只是可小仓里按值分谁更靠前，值分高不能推翻闸，也不能把出货票洗白。")
     lines.append("- 可以买=总闸过了才能开仓。TOP5只排可小仓（按值分）；观察/可试仓再热也只进备选池，不把TOP5凑满。值分：闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价。均线分只拉开能买里谁更稳，不能翻盘。")
-    lines.append("- 打板仓（近7日涨停池）：只做一进二/弱转强/高分龙回头。今涨停不追、骗炮/开后砸不买、主线回避和退潮只观察。打板分≥75才可小仓，不替代7a游资闸。止损看昨低/MA5/ATR，至少离开约3%；止盈看昨高或涨停。")
-    lines.append("- 竞价涨停/近板开后砸盘→不买（出货）。其余竞价只轻加减值分：抢筹+3、承接+1、正常0、砸盘-2、骗炮-3；普通骗炮标签不单独关闸。")
+    lines.append("- 值分去重：游资/打板/ETF 的盘面分里已含板块资金和竞价质量，值分里主线热度只按0.45计、竞价不再重复加（竞价列显示0即此意，判别仍照常用）；趋势用买点分，不含这两项，全额计。")
+    lines.append("- 判别加了滞后带：刚过线（如7a 65～70）要连续两次达标才给可小仓；已在可小仓的，分数回落到60以上仍维持。降级、骗炮、回避、退潮立即生效，不等确认。")
+    lines.append("- 打板仓（近7日涨停池）：只做一进二/弱转强/板内龙头回头。昨板质量取东财涨停池真值（封单额/封成比/开板次数/是否一字），昨一字板不打、昨烂板才算弱转强、龙回头必须是板内前列且缩量回踩均线。昨板今日整体亏钱（赚钱效应差）时打板不新开。打板分≥75才可小仓，不替代7a游资闸。")
+    lines.append("- 竞价涨停/近板开后砸盘→不买（出货）。竞价质量已并入各战法盘面分；量比和换手都按时段归一（早盘成交前置，10:00的量比1.5不等于14:30的1.5）。")
     lines.append("- 表一看「买点」列：可小仓=能买，观察=盯着，不买/不追=不能买。分只是均线健康。")
+    miss_q = [x["name"] for x in stocks + etfs if not live.get(x["code"])]
+    if miss_q or FETCH_FAIL:
+        bits = []
+        if miss_q:
+            bits.append("无行情（停牌/取不到）：" + "、".join(miss_q[:8]))
+        if FETCH_FAIL:
+            bits.append("取数失败：" + "、".join(f"{k}×{v}" for k, v in FETCH_FAIL.items()))
+        lines.append("- **数据完整性**：" + "；".join(bits) + "。这些票的结论不可用，别当成「没信号」。")
     lines.append("")
     ovn_blk = MACRO.get("overnight_external") or {}
     lines.append("## 1 外盘隔夜")
@@ -4510,13 +5577,13 @@ def main():
         lines.append("- 无合格筛选结果")
     lines.append("")
     lines.append("## 7 游资打分")
-    lines.append("因子：板块资金｜主力5日｜资金-涨幅同向｜游资弹性（小市值+量比+振幅）｜涨停空间｜竞价质量｜低位启动｜追高罚。昨单日主力接口不稳，用今主力+5日主力代理。")
+    lines.append("因子（7项+追高罚）：板块资金0.10｜资金合成0.30（今主力+5日+涨幅同向，同一口径合并计一次）｜游资弹性0.18（小市值+归一量比+振幅）｜涨停空间0.10｜竞价质量0.12｜低位启动0.10｜承接质量0.10（分时均价+封单额/封成比+开板次数）。量比已按时段归一，早盘不再天然高分。")
     lines.append(mood.get("txt") or "情绪：暂缺")
-    lines.append("换手/竞价量/弱转强/超大单/题材板/昨龙虎/连板/昨ZT溢价/板内排名/竞价额/换手市值是加列和环境，不进 8 因子分、不改怎么做。")
+    lines.append("换手/竞价量/弱转强/超大单/题材板/昨龙虎/连板/昨ZT溢价/板内排名/竞价额/换手市值是加列和环境，不进 7 因子分、不改怎么做。")
 
     def emit_yz_table(title, block):
         lines.append(title)
-        lines.append("| 序 | 股票 | 类型 | 板块 | 8因子 | 资金/暗盘代理 | 弹性 | 空间 | 操作分 | 怎么做 | 换手 | 竞价量 | 弱转强 | 超大单 | 题材板 | 昨龙虎 | 连板 | 昨ZT溢价 | 板内排名 | 竞价额 | 换手市值 |")
+        lines.append("| 序 | 股票 | 类型 | 板块 | 7因子 | 资金/暗盘代理 | 弹性 | 空间 | 操作分 | 怎么做 | 换手 | 竞价量 | 弱转强 | 超大单 | 题材板 | 昨龙虎 | 连板 | 昨ZT溢价 | 板内排名 | 竞价额 | 换手市值 |")
         lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         if not block:
             lines.append("| - | 无 | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |")
@@ -4533,7 +5600,7 @@ def main():
 
     emit_yz_table(f"### 7a 游资（{len(yz_youzi)}只）", yz_youzi)
     lines.append("### 7a 门槛（未达标≠永远不值得买，只是游资仓今天不开）")
-    lines.append("- **7a未达标**=8因子分<65。总判最多观察，不能当游资可小仓。趋势票走趋势闸，不看这道65分。值分高不能推翻闸。")
+    lines.append("- **7a未达标**=7因子分<65。总判最多观察，不能当游资可小仓。趋势票走趋势闸，不看这道65分。值分高不能推翻闸。")
     lines.append("- 过65还要同时满足：非今涨停/非+7%过热、非昨跌停骗炮、非竞价涨停开后砸盘、情绪非退潮、how不含骗炮/见顶/涨停结束、主线非回避、换手≥5%或量比≥1.5、14:30前。少一条就停在观察。")
     lines.append("| 序 | 股票 | 7a | 买点 | 未进可买的原因 |")
     lines.append("|---|---|---|---|---|")
@@ -4621,7 +5688,7 @@ def main():
     lines.append("- 不追：" + ("，".join(hot) if hot else "暂无+7%以上"))
     lines.append("- 昨跌停：" + ("，".join(ylds) + "（骗炮才不买，弱转强不一刀切）" if ylds else "无"))
     lines.append("### 近7日打板排名（专用战法，按打板分）")
-    lines.append("- 因子：题材助攻、主线、市值20-80亿、换手8-22%、竞价3-7%或低开翻红、竞价量比、连板高度、主力同向、情绪。今涨停仍不追。")
+    lines.append("- 因子：昨板质量（东财涨停池：封单额/封成比/开板次数/是否一字）、题材助攻、主线、市值20-80亿、换手8-22%、竞价3-7%且站住开盘、竞价量比、连板高度与市场最高板的距离、昨板今日赚钱效应、主力同向、情绪分档。今涨停仍不追；昨一字板不打。")
     lines.append("| 打板序 | 股票 | 战法 | 打板分 | 打板闸 | 总买点 | 近7日涨停 | 连板 | 今涨 | 说明 |")
     lines.append("|---|---|---|---|---|---|---|---|---|---|")
     ranked_db = sorted(daban_by_code.items(), key=lambda kv: -kv[1].get("score", 0))
@@ -4710,7 +5777,7 @@ def main():
     if not n_buy_rows:
         lines.append("| - | 没有同时满足分层条件的票 | - | - | - | - | 表一可小仓+主线未回避；或打板分≥75一进二/弱转强；或7a≥65；或表三可试仓 | - | **不买** | - | - |")
     lines.append("")
-    lines.append("总判规则：趋势=表一可小仓且主线不是回避（同主线按买点分优先）；打板=近7日涨停池、一进二或弱转强、打板分≥75、未今涨停/未骗炮/未回避/非退潮；游资=7a≥65、未涨停/未骗炮、主线不是回避、情绪非退潮、换手≥5%或量比≥1.5；ETF=表一ETF对照、8因子可小仓且分≥60涨幅<5%；左侧=表三可试仓（轻仓）。最适合买：趋势可小仓 > 打板达标 > 游资达标 > ETF > 左侧。值分含均线分×0.18作参考，不替代闸。昨跌停看骗炮/弱转强，今涨停不追。止盈止损参考均线、前高、ATR吊灯和固定风险，不设不到1个点的碎止盈。估算不是下单。")
+    lines.append("总判规则：趋势=表一可小仓且主线不是回避（同主线按买点分优先）；打板=近7日涨停池、一进二或弱转强、打板分≥75、未今涨停/未骗炮/未回避/非退潮；游资=7a≥65、未涨停/未骗炮、主线不是回避、情绪非退潮、换手≥5%或量比≥1.5；ETF=表一ETF对照、7因子可小仓且分≥60涨幅<5%；左侧=表三可试仓（轻仓）。最适合买：趋势可小仓 > 打板达标 > 游资达标 > ETF > 左侧。值分含均线分×0.18作参考，不替代闸。昨跌停看骗炮/弱转强，今涨停不追。止盈止损参考均线、前高、ATR吊灯和固定风险，不设不到1个点的碎止盈。估算不是下单。")
     if trend_let:
         lines.append("- 同主线趋势让出：" + "、".join(x[0] for x in trend_let))
     if youzi_let:
@@ -4722,11 +5789,11 @@ def main():
         lines.append("- 游资仓参考（只看7a）：" + "、".join(f"{s['name']} {yz['score']:.0f}分 {yz['how']}" for s, q, f, yld, yz in yz_top))
     else:
         lines.append("- 游资仓：7a前排过热或不到分，不新开")
-    lines.append("- 趋势仓：只看表一趋势池可小仓；游资不进表一买点，也不把8因子/回踩/斜率加进均线分")
+    lines.append("- 趋势仓：只看表一趋势池可小仓；游资不进表一买点，也不把7因子/回踩/斜率加进均线分")
     if mood.get("phase") == "退潮":
-        lines.append("- 游资仓：情绪退潮，表二 8 因子高分也只看不追（分本身不改）")
+        lines.append("- 游资仓：情绪退潮，表二 7 因子高分也只看不追（分本身不改）")
     elif mood.get("phase") == "高潮":
-        lines.append("- 游资仓：情绪高潮，可看跟风，仍不追高标；8因子分不改")
+        lines.append("- 游资仓：情绪高潮，可看跟风，仍不追高标；7因子分不改")
     if idx_weak_why:
         lines.append("- 表三大盘环境：" + "、".join(idx_weak_why) + " → 趋势左侧只观察，游资左侧不因此关掉")
     if left_try:
@@ -4986,7 +6053,7 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
                 if cells and all(set(c.replace(":", "")) <= {"-", ""} for c in cells):
                     continue
                 body.append(cells)
-            wrap_headers = {"8因子", "资金/暗盘代理", "怎么做", "止跌确认", "左侧确认", "仓位", "为什么", "依据", "主线热度", "主线", "位置", "斐波那契", "未进可买的原因", "说明", "领涨", "板块", "战法", "止损", "止盈"}
+            wrap_headers = {"7因子", "资金/暗盘代理", "怎么做", "止跌确认", "左侧确认", "仓位", "为什么", "依据", "主线热度", "主线", "位置", "斐波那契", "未进可买的原因", "说明", "领涨", "板块", "战法", "止损", "止盈"}
             parts.append("<div class=swipe><div class=tip>宽表 · 左右滑动看全列</div><div class=wrap><table><thead><tr>")
             for h in headers:
                 cls = " class=wrapcell" if h in wrap_headers else ""

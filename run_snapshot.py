@@ -1520,6 +1520,7 @@ def _yahoo_bar(sym):
 SINA_MAP = {
     "^DJI": ("gb_dji", "us"), "^GSPC": ("gb_inx", "us"), "^IXIC": ("gb_ixic", "us"),
     "^SOX": ("gb_sox", "us"), "^N225": ("int_nikkei", "int"), "^HSI": ("int_hangseng", "int"),
+    "EWY": ("gb_ewy", "us"),  # 韩国综指直连常空，用韩国ETF作代理
     "SMH": ("gb_smh", "us"), "XLK": ("gb_xlk", "us"), "XLF": ("gb_xlf", "us"),
     "XLE": ("gb_xle", "us"), "XLV": ("gb_xlv", "us"), "IBB": ("gb_ibb", "us"),
     "XLB": ("gb_xlb", "us"), "XLI": ("gb_xli", "us"), "XLY": ("gb_xly", "us"),
@@ -1887,7 +1888,7 @@ def overnight_scan(stocks=None, etfs=None):
     """隔夜美股指数+板块ETF+金属原油扫描，并映射到自选次日关注。"""
     idx_specs = [
         ("^DJI", "道指"), ("^GSPC", "标普"), ("^IXIC", "纳指"), ("^SOX", "费城半导体"),
-        ("^N225", "日经"), ("^HSI", "恒生"),
+        ("^N225", "日经"), ("^HSI", "恒生"), ("EWY", "韩国"),
     ]
     sector_specs = [
         ("SMH", "半导体ETF"), ("XLK", "科技ETF"), ("XLF", "金融ETF"),
@@ -4778,7 +4779,8 @@ def main():
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     stocks, etfs, idx = WL["stocks"], WL["etfs"], WL["index"]
     extra = [
-        "hkHSI", "sz159941", "sh513100", "sh512480", "sz159813", "sh515050",
+        "hkHSI", "sh000688", "usIXIC", "usEWY",
+        "sz159941", "sh513100", "sh512480", "sz159813", "sh515050",
         "sh512010", "sh000933", "sz399989",
     ]
     codes = extra[:]
@@ -4786,7 +4788,7 @@ def main():
         codes.append(("sh" if x["market"] == "sh" else "sz") + x["code"])
     live = tencent(codes)
 
-    idx_lines, shapes, idx_tape = [], [], []
+    idx_lines, shapes = [], []
     idx_short = {"上证指数": "上证", "深证成指": "深成", "创业板指": "创业", "沪深300": "沪深300"}
     for x in idx:
         q = live.get(x["code"])
@@ -4796,25 +4798,6 @@ def main():
             idx_lines.append(
                 f"{x['name']} {q['px']:.2f} {q['chg']:+.2f}% 开{q['open']:.2f} 高{q['high']:.2f} 低{q['low']:.2f} {shp} 量比{q['vol_ratio']:.2f}"
             )
-            idx_tape.append({
-                "name": idx_short.get(x["name"], x["name"]),
-                "code": x["code"],
-                "px": round(q["px"], 2),
-                "chg": round(q["chg"], 2),
-                "open": round(q["open"], 2),
-                "high": round(q["high"], 2),
-                "low": round(q["low"], 2),
-                "shape": shp,
-                "vol_ratio": round(q.get("vol_ratio") or 0, 2),
-            })
-        else:
-            idx_tape.append({
-                "name": idx_short.get(x["name"], x["name"]),
-                "code": x["code"], "px": None, "chg": None,
-            })
-    # 顶栏只要四大盘；没有报价也占位，避免空白误以为没跑
-    if not idx_tape:
-        idx_tape = [{"name": n, "px": None, "chg": None} for n in ("上证", "深成", "创业", "沪深300")]
 
 
     ext_map = [
@@ -4872,6 +4855,41 @@ def main():
                 ovn_scan["bias"] = ovn_scan.get("bias") or "中性分化"
                 ovn_scan["bias_why"] = "实时报价暂缺，主题来自宏观笔记，只跟领涨主题"
     ovn = ovn_scan.get("summary") or []
+
+    def _idx_chip(name, q=None, ovn_row=None, code=""):
+        if q and q.get("px") not in (None,):
+            return {
+                "name": name, "code": code,
+                "px": round(q["px"], 2), "chg": round(q["chg"], 2),
+                "open": round(q.get("open") or 0, 2),
+                "high": round(q.get("high") or 0, 2),
+                "low": round(q.get("low") or 0, 2),
+                "shape": index_shape(q) if q.get("prev") else "",
+                "vol_ratio": round(q.get("vol_ratio") or 0, 2),
+            }
+        if ovn_row and ovn_row.get("last") not in (None,):
+            return {
+                "name": name, "code": ovn_row.get("sym") or code,
+                "px": round(ovn_row["last"], 2), "chg": round(ovn_row["chg"], 2),
+            }
+        return {"name": name, "code": code, "px": None, "chg": None}
+
+    ovn_idx = {r.get("name"): r for r in (ovn_scan.get("indices") or [])}
+    idx_tape = []
+    for x in idx:
+        idx_tape.append(_idx_chip(idx_short.get(x["name"], x["name"]), live.get(x["code"]), code=x["code"]))
+    idx_tape.append(_idx_chip("恒生", live.get("HSI"), ovn_idx.get("恒生"), "HSI"))
+    idx_tape.append(_idx_chip("科创50", live.get("000688"), code="000688"))
+    q_us = live.get(".IXIC") or live.get("IXIC")
+    idx_tape.append(_idx_chip("美国", q_us, ovn_idx.get("纳指"), "IXIC"))
+    idx_tape.append(_idx_chip("日本", None, ovn_idx.get("日经"), "N225"))
+    q_kr = live.get("EWY.AM") or live.get("EWY")
+    idx_tape.append(_idx_chip("韩国", q_kr, ovn_idx.get("韩国"), "EWY"))
+    idx_tape.append(_idx_chip("美半", None, ovn_idx.get("费城半导体"), "SOX"))
+    if not any(r.get("px") is not None for r in idx_tape):
+        idx_tape = [{"name": n, "px": None, "chg": None} for n in
+                    ("上证", "深成", "创业", "沪深300", "恒生", "科创50", "美国", "日本", "韩国", "美半")]
+
 
     def one_name(s, asset="stock"):
         item = dict(s)
@@ -5874,42 +5892,6 @@ def main():
         )
     lines.append("- 用法：早上8点先看本节定关注名单；9:30后用第0节买点+竞价+资金主线确认，隔夜推荐不能单独开仓。")
     lines.append("")
-    dom = MACRO.get("domestic") or {}
-    lines.append("## 2 国内政策")
-    for x in (news.get("policy") or [])[:6]:
-        if re.search(r"央行|证监会|国务院|发改委|工信部|财政部|降准|规划|印发", x):
-            lines.append("- 今日快讯：" + x)
-    for x in (news.get("domestic") or [])[:5]:
-        lines.append("- 国内快讯：" + x)
-    note_asof = str(MACRO.get("asof") or "")
-    if note_asof and note_asof < now.strftime("%Y-%m-%d"):
-        lines.append(f"- 背景笔记截至 {note_asof}：" + (dom.get("implication") or "政策中期看资金认不认，不用规划代替买点。"))
-    else:
-        for x in (dom.get("policy") or [])[:3]:
-            lines.append("- 政策：" + x)
-        for x in (dom.get("direction") or [])[:2]:
-            lines.append("- 方向：" + x)
-        if dom.get("implication"):
-            lines.append("- 对今天：" + dom["implication"])
-    if not (news.get("policy") or news.get("domestic") or dom.get("policy") or dom.get("direction")):
-        lines.append("- 国内政策调研暂缺")
-    lines.append("")
-    lines.append("## 3 大盘")
-    lines.append("- 本轮快照指数已缩到顶栏「分析 / 重跑」右侧（当时价，不是刷新后的实时跳价）。")
-    if idx_tape:
-        bits = []
-        for r in idx_tape:
-            if r.get("px") is None:
-                bits.append(f"{r['name']} —")
-            else:
-                bits.append(f"{r['name']} {r['px']:.0f} {r['chg']:+.2f}%")
-        lines.append("- " + "　".join(bits))
-    elif idx_lines:
-        lines.extend("- " + x for x in idx_lines)
-    else:
-        lines.append("- 指数暂缺")
-    lines.append("")
-
     lines.append("## 4 板块资金")
     lines.append("口径：东财行业主力净流入（估算）。流入/流出只定主线热度，不单独开仓。")
     lines.append("### 板块资金流入")
@@ -6489,8 +6471,6 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         "<a href='#s0'>0 能不能买</a>",
         "<a href='#s1'>1 外盘隔夜</a>",
         "<a href='#s1b'>1b 隔夜映射</a>",
-        "<a href='#s2'>2 国内政策</a>",
-        "<a href='#s3'>3 大盘</a>",
         "<a href='#s4'>4 板块资金</a>",
         "<a href='#s4b'>4b 集合竞价</a>",
         "<a href='#s5'>5 个股一览</a>",

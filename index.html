@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,interactive-widget=resizes-content">
   <title>今日自选</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -77,7 +77,8 @@
     .links a { color:var(--ice); text-decoration:none; }
     .links a:hover { text-decoration:underline; text-underline-offset:3px; }
     iframe { width:100%; height:100%; border:0; background:#111110; display:block; position:relative; z-index:0; }
-    .stage { flex:1; min-height:0; position:relative; z-index:0; isolation:isolate; }
+    .report-flow { display:none; flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; background:#111110; }
+    .stage { flex:1; min-height:0; position:relative; z-index:0; isolation:isolate; display:flex; flex-direction:column; }
     .panel { display:none; flex:1; min-height:0; overflow:auto; }
     .panel.on { display:flex; flex-direction:column; }
     #panel-watch.on { display:block; }
@@ -123,7 +124,7 @@
     }
     .mob-dock { display:none; }
     @media (max-width:859px) {
-      .drawer { width:100vw; border-left:0; z-index:96; }
+      .drawer { width:100vw; border-left:0; z-index:2147483600; }
       .eyebrow { display:none; }
       .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 10px; }
       .top h1 { font-size:18px; line-height:1.4; }
@@ -131,9 +132,15 @@
       .meta { font-size:12px; }
       .cards { display:none; }
       .links { margin:4px 0 0; font-size:12px; }
-      /* 顶栏工具在手机上让给底栏：iframe 会盖住它前面的兄弟节点 */
-      #toolbar, body.watch #toolbar { display:none !important; }
+      /* 苹果 Chrome 的 iframe 会盖住页面上的 fixed 底栏，搜索分析改放顶栏，报告改内嵌滚动 */
       .top .toggle { background:#f2f1ec; color:#111110; }
+      .toolbar { flex-wrap:wrap; margin:8px 0 6px; }
+      .toolbar input { flex:1 1 96px; min-width:0; max-width:none; font-size:16px; }
+      .idx-tape {
+        flex:1 1 100%; justify-content:flex-start; flex-wrap:nowrap;
+        overflow-x:auto; -webkit-overflow-scrolling:touch; margin-left:0;
+      }
+      .idx-chip { font-size:11px; padding:5px 7px; }
       .bar {
         flex-direction:column;
         align-items:stretch;
@@ -142,47 +149,11 @@
         width:100%;
         max-width:none;
       }
-      .layout { padding-bottom:calc(118px + env(safe-area-inset-bottom,0px)); }
-      body.watch .layout { padding-bottom:0; }
-      body.watch .mob-dock { display:none !important; }
-      .mob-dock {
-        display:block;
-        position:fixed;
-        left:0; right:0; bottom:0;
-        z-index:2147483000;
-        -webkit-transform:translate3d(0,0,0);
-        transform:translate3d(0,0,0);
-        background:#111110;
-        border-top:1px solid var(--line);
-        padding:10px 10px calc(10px + env(safe-area-inset-bottom,0px));
-      }
-      .mob-dock input {
-        width:100%;
-        min-height:44px;
-        margin:0 0 8px;
-        background:#1c1c1a;
-        color:#fff;
-        border:1px solid #c5c2b6;
-        border-radius:10px;
-        padding:10px 12px;
-        font-size:16px;
-      }
-      .mob-dock .idx-tape {
-        justify-content:flex-start; flex-wrap:nowrap; overflow-x:auto;
-        margin:0 0 8px; -webkit-overflow-scrolling:touch;
-      }
-      .mob-dock .idx-chip { font-size:11px; padding:5px 7px; min-height:0; }
-      .mob-dock .act, .mob-dock .toggle {
-        flex:1 1 0;
-        min-width:0;
-        min-height:48px;
-        background:#f2f1ec;
-        color:#111110;
-        border:0;
-        border-radius:10px;
-        font-size:16px;
-        font-weight:700;
-      }
+      html, body, .layout { height:100%; height:100dvh; overflow:hidden; }
+      .layout { padding-bottom:0; }
+      iframe { display:none !important; height:0 !important; width:0 !important; }
+      .report-flow { display:block; flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; }
+      .mob-dock { display:none !important; }
     }
   </style>
 </head>
@@ -216,7 +187,8 @@
 
     <div class="panel on" id="panel-report">
       <div class="stage">
-        <iframe id="report" title="完整报告" src="/reports/latest.html?ui=ink" scrolling="yes"></iframe>
+        <iframe id="report" title="完整报告" src="about:blank" scrolling="yes"></iframe>
+        <div class="report-flow" id="report-flow"></div>
       </div>
     </div>
 
@@ -288,6 +260,7 @@
     const panelWatch = document.getElementById("panel-watch");
     const mask = document.getElementById("mask");
     const iframe = document.getElementById("report");
+    const reportFlow = document.getElementById("report-flow");
     let watchLoaded = false;
     let lastSnap = "";
     let token = sessionStorage.getItem("watch_token") || "";
@@ -395,6 +368,40 @@
       if (m) return m[1] + " " + m[2] + " 北京";
       return s || "—";
     }
+    function isPhone() {
+      return window.matchMedia("(max-width:859px)").matches;
+    }
+    async function showReport(url) {
+      if (!isPhone()) {
+        if (reportFlow && reportFlow.shadowRoot) reportFlow.shadowRoot.innerHTML = "";
+        iframe.style.display = "";
+        iframe.src = url;
+        return;
+      }
+      iframe.removeAttribute("src");
+      iframe.src = "about:blank";
+      iframe.style.display = "none";
+      if (!reportFlow) return;
+      try {
+        const r = await fetch(url);
+        const t = await r.text();
+        const doc = new DOMParser().parseFromString(t, "text/html");
+        const root = reportFlow.shadowRoot || reportFlow.attachShadow({mode: "open"});
+        root.innerHTML = "";
+        const wrap = document.createElement("div");
+        wrap.style.cssText = "min-height:100%;background:#111110;color:#f2f1ec;";
+        const st = doc.querySelector("style");
+        const nav = doc.querySelector("nav");
+        const page = doc.querySelector(".page");
+        if (st) wrap.appendChild(document.importNode(st, true));
+        if (nav) wrap.appendChild(document.importNode(nav, true));
+        if (page) wrap.appendChild(document.importNode(page, true));
+        root.appendChild(wrap);
+        reportFlow.scrollTop = 0;
+      } catch (e) {
+        reportFlow.innerHTML = "<p class='meta'>报告加载失败，请点「新窗口」</p>";
+      }
+    }
     function paintIdxTape(d) {
       const hx = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
       const rows = d.idx_tape || [];
@@ -438,7 +445,7 @@
       ).join("");
       if (t && t !== lastSnap) {
         lastSnap = t;
-        iframe.src = "/reports/latest.html?t=" + encodeURIComponent(t) + "&r=" + Date.now();
+        showReport("/reports/latest.html?t=" + encodeURIComponent(t) + "&r=" + Date.now());
       }
     }
     async function refreshLatest() {
@@ -639,7 +646,7 @@
             lastSnap = "";
             go("report");
             await refreshLatest();
-            iframe.src = "/reports/latest.html?t=" + encodeURIComponent(st.latest_time || Date.now()) + "&r=" + Date.now();
+            showReport("/reports/latest.html?t=" + encodeURIComponent(st.latest_time || Date.now()) + "&r=" + Date.now());
             sayHere("报告已生成并自动刷新 " + (st.latest_time || "") + "，不用再手动刷新。", "ok");
             clearInterval(snapTimer); snapTimer = null;
             if (btn) btn.disabled = false;
@@ -673,20 +680,24 @@
     bindScan(document.getElementById("scan-code-m"), document.getElementById("scan-code"));
     const runAnalyze = (btn) => analyze(scanCode(), "自选", false, btn);
     document.getElementById("btn-analyze").onclick = () => runAnalyze(document.getElementById("btn-analyze"));
-    document.getElementById("btn-analyze-m").onclick = () => runAnalyze(document.getElementById("btn-analyze-m"));
+    const btnAm = document.getElementById("btn-analyze-m");
+    if (btnAm) btnAm.onclick = () => runAnalyze(btnAm);
     document.getElementById("drawer-close").onclick = () => {
       document.getElementById("drawer").classList.remove("on");
     };
     document.getElementById("scan-code").addEventListener("keydown", e => {
       if (e.key === "Enter") runAnalyze(document.getElementById("btn-analyze"));
     });
-    document.getElementById("scan-code-m").addEventListener("keydown", e => {
-      if (e.key === "Enter") runAnalyze(document.getElementById("btn-analyze-m"));
+    const scanM = document.getElementById("scan-code-m");
+    if (scanM) scanM.addEventListener("keydown", e => {
+      if (e.key === "Enter") runAnalyze(btnAm);
     });
     document.getElementById("btn-runall").onclick = () => runAll(document.getElementById("btn-runall"));
-    document.getElementById("btn-runall-m").onclick = () => runAll(document.getElementById("btn-runall-m"));
+    const btnRm = document.getElementById("btn-runall-m");
+    if (btnRm) btnRm.onclick = () => runAll(btnRm);
     document.getElementById("btn-runall2").onclick = () => runAll(document.getElementById("btn-runall2"));
-    document.getElementById("toggle-m").onclick = () => toggle.click();
+    const togM = document.getElementById("toggle-m");
+    if (togM) togM.onclick = () => toggle.click();
     document.getElementById("add-analyze").onclick = () => {
       const code = document.getElementById("code").value.trim();
       const board = document.getElementById("board").value.trim();

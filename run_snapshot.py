@@ -5707,8 +5707,8 @@ def main():
     lines.append("")
     lines.append("## 1b 隔夜映射")
     lines.append(
-        "框架：美股指数 + 行业ETF领涨/领跌 + 黄金/白银/铜/原油 + 光通信美股(LITE/COHR)。"
-        "先定次日国内关注板块，再从自选里筛龙头。只作预案，不进买点闸、不进表一分/7a。"
+        "隔夜预案只写在这里，不进第0节。美股指数 + 行业ETF领涨/领跌 + 黄金/白银/铜/原油 + 光通信美股(LITE/COHR)。"
+        "先定次日国内关注板块，再从自选里筛龙头。只盯不改买点闸，不进表一分/7a。"
     )
     sc = ovn_scan or {}
     lines.append(f"- 隔夜偏好：**{sc.get('bias') or '-'}** — {sc.get('bias_why') or ''}")

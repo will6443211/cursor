@@ -55,7 +55,7 @@
     .scan .why b { color:#fff; font-weight:700; margin-right:8px; }
     .scan .why-h { color:var(--ice); font-size:13px; font-weight:650; margin:16px 0 2px; }
     .drawer { display:none; position:fixed; top:0; right:0; width:min(440px,100vw); height:100%;
-      background:#111110; border-left:1px solid var(--line); z-index:90; overflow:auto;
+      background:#111110; border-left:1px solid var(--line); z-index:2147483600; overflow:auto;
       padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(88px + env(safe-area-inset-bottom,0px)); }
     .drawer.on { display:block; }
     .drawer h2 { margin:0 0 10px; font-size:20px; line-height:1.4; }
@@ -92,7 +92,7 @@
     table.wl tr:hover td { background:#262624; }
     .tag { display:inline-block; font-size:12px; padding:2px 8px; border-radius:8px; background:#262624; color:#c5c2b6; }
     .tag.etf { background:rgba(111,186,141,.12); color:#6fba8d; }
-    .mask { display:none; position:fixed; inset:0; background:rgba(17,17,16,.72); z-index:95;
+    .mask { display:none; position:fixed; inset:0; background:rgba(17,17,16,.72); z-index:2147483620;
       align-items:center; justify-content:center; padding:16px; }
     .mask.on { display:flex; }
     .dlg { background:#1c1c1a; border:1px solid var(--line); border-radius:14px; padding:20px; width:min(360px,100%); }
@@ -107,6 +107,7 @@
       .card { flex:1 1 140px; min-width:140px; }
       .toolbar input { max-width:168px; font-size:14px; }
     }
+    .mob-dock { display:none; }
     @media (max-width:859px) {
       .drawer { width:100vw; border-left:0; z-index:96; }
       .eyebrow { display:none; }
@@ -116,28 +117,9 @@
       .meta { font-size:12px; }
       .cards { display:none; }
       .links { margin:4px 0 0; font-size:12px; }
-      body.watch #toolbar { display:none !important; }
-      /* 不要钉在底部：iOS iframe 会盖住 position:fixed，backdrop-filter 还会把 fixed 困在顶栏里 */
-      .toolbar {
-        position:static;
-        display:flex;
-        flex-wrap:wrap;
-        margin:10px 0 0;
-        padding:0;
-        gap:8px;
-        background:transparent;
-        border:0;
-      }
-      .toolbar input {
-        flex:1 1 100%;
-        width:100%;
-        min-width:0;
-        max-width:none;
-      }
-      .toolbar button.act {
-        flex:1 1 calc(50% - 4px);
-        min-width:0;
-      }
+      /* 顶栏工具在手机上让给底栏：iframe 会盖住它前面的兄弟节点 */
+      #toolbar, body.watch #toolbar { display:none !important; }
+      .top .toggle { background:#f2f1ec; color:#111110; }
       .bar {
         flex-direction:column;
         align-items:stretch;
@@ -146,7 +128,43 @@
         width:100%;
         max-width:none;
       }
-      .toggle { flex:0 0 auto; }
+      .layout { padding-bottom:calc(118px + env(safe-area-inset-bottom,0px)); }
+      body.watch .layout { padding-bottom:0; }
+      body.watch .mob-dock { display:none !important; }
+      .mob-dock {
+        display:block;
+        position:fixed;
+        left:0; right:0; bottom:0;
+        z-index:2147483000;
+        -webkit-transform:translate3d(0,0,0);
+        transform:translate3d(0,0,0);
+        background:#111110;
+        border-top:1px solid var(--line);
+        padding:10px 10px calc(10px + env(safe-area-inset-bottom,0px));
+      }
+      .mob-dock input {
+        width:100%;
+        min-height:44px;
+        margin:0 0 8px;
+        background:#1c1c1a;
+        color:#fff;
+        border:1px solid #c5c2b6;
+        border-radius:10px;
+        padding:10px 12px;
+        font-size:16px;
+      }
+      .mob-row { display:flex; gap:8px; }
+      .mob-dock .act, .mob-dock .toggle {
+        flex:1 1 0;
+        min-width:0;
+        min-height:48px;
+        background:#f2f1ec;
+        color:#111110;
+        border:0;
+        border-radius:10px;
+        font-size:16px;
+        font-weight:700;
+      }
     }
   </style>
 </head>
@@ -218,6 +236,15 @@
     <button class="close" id="drawer-close" type="button">关闭</button>
     <h2>单次分析（不加入自选）</h2>
     <div class="scan" id="scan-box"></div>
+  </div>
+
+  <div class="mob-dock" id="mob-dock">
+    <input id="scan-code-m" maxlength="16" placeholder="代码或名称" autocomplete="off" inputmode="search">
+    <div class="mob-row">
+      <button class="act" id="btn-analyze-m" type="button">分析</button>
+      <button class="act" id="btn-runall-m" type="button">重跑</button>
+      <button class="toggle" id="toggle-m" type="button">自选</button>
+    </div>
   </div>
 
   <div class="mask" id="mask">
@@ -593,18 +620,35 @@
         if (btn) btn.disabled = false;
       }
     }
-    document.getElementById("btn-analyze").onclick = () => {
-      const code = document.getElementById("scan-code").value.trim();
-      analyze(code, "自选", false, document.getElementById("btn-analyze"));
-    };
+    function scanCode() {
+      const m = document.getElementById("scan-code-m");
+      const d = document.getElementById("scan-code");
+      const mobile = window.matchMedia("(max-width:859px)").matches;
+      const el = (mobile && m) ? m : d;
+      return ((el && el.value) || (d && d.value) || (m && m.value) || "").trim();
+    }
+    function bindScan(src, dst) {
+      if (!src || !dst) return;
+      src.addEventListener("input", () => { dst.value = src.value; });
+    }
+    bindScan(document.getElementById("scan-code"), document.getElementById("scan-code-m"));
+    bindScan(document.getElementById("scan-code-m"), document.getElementById("scan-code"));
+    const runAnalyze = (btn) => analyze(scanCode(), "自选", false, btn);
+    document.getElementById("btn-analyze").onclick = () => runAnalyze(document.getElementById("btn-analyze"));
+    document.getElementById("btn-analyze-m").onclick = () => runAnalyze(document.getElementById("btn-analyze-m"));
     document.getElementById("drawer-close").onclick = () => {
       document.getElementById("drawer").classList.remove("on");
     };
     document.getElementById("scan-code").addEventListener("keydown", e => {
-      if (e.key === "Enter") document.getElementById("btn-analyze").click();
+      if (e.key === "Enter") runAnalyze(document.getElementById("btn-analyze"));
+    });
+    document.getElementById("scan-code-m").addEventListener("keydown", e => {
+      if (e.key === "Enter") runAnalyze(document.getElementById("btn-analyze-m"));
     });
     document.getElementById("btn-runall").onclick = () => runAll(document.getElementById("btn-runall"));
+    document.getElementById("btn-runall-m").onclick = () => runAll(document.getElementById("btn-runall-m"));
     document.getElementById("btn-runall2").onclick = () => runAll(document.getElementById("btn-runall2"));
+    document.getElementById("toggle-m").onclick = () => toggle.click();
     document.getElementById("add-analyze").onclick = () => {
       const code = document.getElementById("code").value.trim();
       const board = document.getElementById("board").value.trim();

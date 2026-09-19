@@ -2905,6 +2905,17 @@ def hysteresis(code, call, why, score=None, enter=None, hold=None, soft=SOFT_DOW
 JOURNAL_DIR = os.path.join(ROOT, "reports", "journal")
 
 
+def session_date(now=None):
+    """A股交易日：周末/开盘前记到上一交易日，避免周六日复跑当成新信号。节假日未单独剔。"""
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    d = now.date()
+    if now.hour < 9 or (now.hour == 9 and now.minute < 15):
+        d = d - datetime.timedelta(days=1)
+    while d.weekday() >= 5:
+        d = d - datetime.timedelta(days=1)
+    return d.strftime("%Y-%m-%d")
+
+
 def _journal_file(date_s):
     return os.path.join(JOURNAL_DIR, date_s[:7] + ".jsonl")
 
@@ -2932,7 +2943,7 @@ def journal_load(months=3):
 
 def journal_record(rows, now):
     """每次跑把判别留档。同一天同一只票同一结论只记一次，结论变了再记一条。"""
-    date_s, time_s = now.strftime("%Y-%m-%d"), now.strftime("%H:%M")
+    date_s, time_s = session_date(now), now.strftime("%H:%M")
     old = journal_load(1)
     have = {(r.get("date"), r.get("code"), r.get("call")) for r in old}
     new = []
@@ -2960,23 +2971,110 @@ def journal_record(rows, now):
     return len(new)
 
 
-def _fwd_from(hist, date_s, px):
+def _bar_on(hist, date_s):
+    for b in hist or []:
+        if b[0] == date_s:
+            return b
+    return None
+
+
+def _bar_nexts(hist, date_s):
+    return [b for b in (hist or []) if b[0] > date_s]
+
+
+def _day_done(now, date_s):
+    """日K收盘是否已经定格。盘中当天那根K的收盘还是现价，不能当次日收。"""
+    today = now.strftime("%Y-%m-%d")
+    if date_s < today:
+        return True
+    if date_s > today:
+        return False
+    return now.hour > 15 or (now.hour == 15 and now.minute >= 5)
+
+
+def _fwd_from(hist, date_s, px, now=None):
     """信号当时的价 → 之后第1/3/5个交易日收盘。用已经抓下来的日线，不额外请求。"""
     if not hist or not px:
         return {}
-    idx = None
-    for i, b in enumerate(hist):
-        if b[0] > date_s:
-            idx = i
-            break
-    if idx is None:
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    nxt = [b for b in _bar_nexts(hist, date_s) if _day_done(now, b[0])]
+    if not nxt:
         return {}
     out = {}
     for tag, step in (("r1", 0), ("r3", 2), ("r5", 4)):
-        j = idx + step
-        if j < len(hist):
-            out[tag] = (hist[j][4] / px - 1) * 100
+        if step < len(nxt):
+            out[tag] = (nxt[step][4] / px - 1) * 100
     return out
+
+
+def _pct(a, b):
+    if not a or not b:
+        return None
+    return (a / b - 1) * 100
+
+
+def _buy_track(recs, hist_by_code, now, cost_pct=0.1):
+    """只跟踪「可以买」(可小仓)：买入价、当日收、次日开涨幅、次日收、胜率。
+    同日同票只取当天第一次可小仓（刚放行时的价）。A股T+1，胜负看次日收相对买入价扣成本。"""
+    first = {}
+    for r in recs:
+        if r.get("call") != "可小仓" or not r.get("code") or not r.get("date"):
+            continue
+        key = (r["date"], r["code"])
+        old = first.get(key)
+        if not old or str(r.get("time") or "") < str(old.get("time") or ""):
+            first[key] = r
+    rows = []
+    n_open = n_open_win = 0
+    n_close = n_close_win = 0
+    s_open = s_close = 0.0
+    for r in sorted(first.values(), key=lambda x: (x.get("date") or "", x.get("time") or ""), reverse=True):
+        try:
+            px = float(r["px"]) if r.get("px") else None
+        except Exception:
+            px = None
+        hist = hist_by_code.get(r.get("code")) or []
+        day = _bar_on(hist, r["date"])
+        day_close = day[4] if day else None
+        nxts = _bar_nexts(hist, r["date"])
+        nxt = nxts[0] if nxts else None
+        nxt_open = nxt[1] if nxt else None
+        nxt_done = bool(nxt and _day_done(now, nxt[0]))
+        nxt_close = nxt[4] if nxt_done else None
+        open_pct = _pct(nxt_open, px)
+        close_pct = _pct(nxt_close, px)
+        net_close = (close_pct - cost_pct) if close_pct is not None else None
+        day_pct = _pct(day_close, px)
+        result = "待次日"
+        if nxt_open and not nxt_done:
+            result = "待收盘"
+        if net_close is not None:
+            result = "胜" if net_close > 0 else "负"
+            n_close += 1
+            n_close_win += 1 if net_close > 0 else 0
+            s_close += net_close
+        if open_pct is not None:
+            n_open += 1
+            n_open_win += 1 if open_pct > 0 else 0
+            s_open += open_pct
+        rows.append({
+            "date": r.get("date"), "time": r.get("time"),
+            "code": r.get("code"), "name": r.get("name"),
+            "kind": r.get("kind"), "line": r.get("line"),
+            "px": px, "day_close": day_close, "day_pct": day_pct,
+            "nxt_open": nxt_open, "open_pct": open_pct,
+            "nxt_close": nxt_close, "close_pct": close_pct, "net_close": net_close,
+            "result": result,
+        })
+    return {
+        "rows": rows[:40],
+        "n": len(rows),
+        "n_open": n_open, "win_open": (n_open_win / n_open * 100) if n_open else None,
+        "avg_open": (s_open / n_open) if n_open else None,
+        "n_close": n_close, "win_close": (n_close_win / n_close * 100) if n_close else None,
+        "avg_close": (s_close / n_close) if n_close else None,
+        "cost_pct": cost_pct,
+    }
 
 
 def journal_review(hist_by_code, days=30, cost_pct=0.1):
@@ -2984,7 +3082,8 @@ def journal_review(hist_by_code, days=30, cost_pct=0.1):
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     today = now.strftime("%Y-%m-%d")
     since = (now - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
-    recs = [r for r in journal_load(3) if since <= (r.get("date") or "") < today]
+    all_recs = [r for r in journal_load(3) if since <= (r.get("date") or "")]
+    recs = [r for r in all_recs if (r.get("date") or "") < today]
     buckets = {}
     per_kind = {}
     n_eval = 0
@@ -2992,7 +3091,7 @@ def journal_review(hist_by_code, days=30, cost_pct=0.1):
         hist = hist_by_code.get(r.get("code"))
         if not hist:
             continue
-        fwd = _fwd_from(hist, r["date"], r.get("px"))
+        fwd = _fwd_from(hist, r["date"], r.get("px"), now)
         if "r1" not in fwd:
             continue
         n_eval += 1
@@ -3027,6 +3126,7 @@ def journal_review(hist_by_code, days=30, cost_pct=0.1):
     return {
         "days": days, "n_rec": len(recs), "n_eval": n_eval,
         "by_call": pack(buckets), "by_kind": pack(per_kind), "cost_pct": cost_pct,
+        "buy_track": _buy_track(all_recs, hist_by_code, now, cost_pct),
     }
 
 
@@ -4677,6 +4777,10 @@ def main():
     left_youzi = [x for x in left_ranked if x[4]["kind"] == "游资"]
     left_try = [x[0]["name"] for x in left_ranked if x[4]["call"] == "可试仓"]
     hist_by_code = {r[0]["code"]: r[4] for r in list(rows) + list(etf_rows)}
+    raw_by_code = {}
+    for r in list(rows) + list(etf_rows):
+        item, _q, fac, _yld, hist = r
+        raw_by_code[item["code"]] = ((fac or {}).get("_raw") or hist)
     # 左侧票用左侧那套止损（失败=破今日低），不套游资/打板的均线止损
     exits_left = {}
     for s, q, f, yld, ls in left_ranked:
@@ -5103,7 +5207,7 @@ def main():
     except Exception:
         n_j = 0
     try:
-        review = journal_review(hist_by_code, 30, risk_cfg.get("cost_pct") or 0.1)
+        review = journal_review(raw_by_code, 30, risk_cfg.get("cost_pct") or 0.1)
     except Exception:
         review = {}
 
@@ -5262,7 +5366,41 @@ def main():
 
     # ---- 0d 信号复盘 ----
     rv = review or {}
-    lines.append(f"### 0d 信号复盘（近{rv.get('days', 30)}日留档，判别是否真的有用）")
+    bt = rv.get("buy_track") or {}
+    def _p(v, n=2):
+        return "-" if v is None else f"{v:.{n}f}"
+    def _pp(v):
+        return "-" if v is None else f"{v:+.2f}%"
+    lines.append("### 0d 可以买跟踪（筛选胜率）")
+    lines.append(
+        "口径：只记当天**可以买（可小仓）**。买入价=刚放行时的现价；当日收=信号日收盘；"
+        "次日开涨幅=(次日开盘-买入价)/买入价；次日收=次日收盘。A股T+1，**胜负看次日收相对买入价、已扣成本"
+        f"{bt.get('cost_pct', rv.get('cost_pct', 0.1))}%**。开盘涨幅只看隔夜，不含成本。不参与今天的闸。"
+    )
+    if bt.get("n"):
+        win_open = f"{bt['win_open']:.0f}%" if bt.get("win_open") is not None else "待次日"
+        win_close = f"{bt['win_close']:.0f}%" if bt.get("win_close") is not None else "待次日收"
+        avg_open = _pp(bt.get("avg_open"))
+        avg_close = _pp(bt.get("avg_close"))
+        lines.append(
+            f"近{rv.get('days', 30)}日可以买 {bt.get('n') or 0} 笔；"
+            f"开盘有数 {bt.get('n_open') or 0} 笔，开盘胜率 {win_open}，开盘均涨 {avg_open}；"
+            f"收盘有数 {bt.get('n_close') or 0} 笔，收盘胜率 {win_close}，收盘均盈 {avg_close}（扣成本）。"
+            "样本少于20笔先别下结论。"
+        )
+        lines.append("| 日期 | 名称 | 买入价 | 当日收 | 当日 | 次日开 | 开盘涨幅 | 次日收 | 次日盈亏 | 结果 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        for r in bt.get("rows") or []:
+            lines.append(
+                f"| {r.get('date') or ''} {r.get('time') or ''} | {r.get('name') or r.get('code')} "
+                f"| {_p(r.get('px'))} | {_p(r.get('day_close'))} | {_pp(r.get('day_pct'))} "
+                f"| {_p(r.get('nxt_open'))} | {_pp(r.get('open_pct'))} "
+                f"| {_p(r.get('nxt_close'))} | {_pp(r.get('net_close'))} | **{r.get('result') or '-'}** |"
+            )
+    else:
+        lines.append(f"- 还没有可小仓留档（本次新增判别 {n_j} 条）。出现可以买之后，这里会列出买入价和次日开/收。")
+
+    lines.append("### 闸区分度（全部判别，对照用）")
     if rv.get("n_eval"):
         lines.append(
             f"口径：留档 {rv['n_rec']} 条、已可评估 {rv['n_eval']} 条；"
@@ -5286,9 +5424,9 @@ def main():
                 lines.append(
                     f"| {r['key']} | {r['n']} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
                 )
-        lines.append("- 看法：可小仓的次日胜率和均收要明显高于观察，否则闸没有区分度；某个战法长期为负就该关掉它，而不是继续调参。样本少于20条先别下结论。")
+        lines.append("- 看法：可小仓的次日胜率和均收要明显高于观察，否则闸没有区分度；某个战法长期为负就该关掉它，而不是继续调参。")
     else:
-        lines.append(f"- 今天开始留档（本次新增 {n_j} 条）。要等隔一个交易日才有可评估样本，之后这里会出胜率表。")
+        lines.append(f"- 对照表要等隔一个交易日才有可评估样本（本次新增 {n_j} 条）。")
     lines.append("- 复盘只用来改阈值，不参与今天的判别。")
 
     trend_watch = [f"{s['name']}" for s, q, f, yld in ranked if verdicts.get(s["code"], ("",))[0] == "观察"]
@@ -5847,6 +5985,15 @@ def main():
                       "tp": (lambda e: f"{e['tp1']}/{e['tp2']}" if e else None)(exits_by_name.get(x["name"]))} for x in alt_pool],
         "daban": [{"name": x[0], "score": x[3], "setup": (daban_by_code.get(x[7]) or {}).get("setup")} for x in daban_ok],
         "left_try": left_names,
+        "buy_track": {
+            "n": (bt or {}).get("n") or 0,
+            "n_open": (bt or {}).get("n_open") or 0,
+            "win_open": (bt or {}).get("win_open"),
+            "avg_open": (bt or {}).get("avg_open"),
+            "n_close": (bt or {}).get("n_close") or 0,
+            "win_close": (bt or {}).get("win_close"),
+            "avg_close": (bt or {}).get("avg_close"),
+        },
         "portfolio": {
             "cfg": pf.get("cfg"),
             "used_pct": round(pf.get("used_pct") or 0, 1),
@@ -5892,16 +6039,15 @@ def inline_md(s):
 
 def cell_class(header, text):
     t = text.replace("**", "").strip()
-    if header in ("今涨", "涨跌"):
+    if header in ("今涨", "涨跌", "当日", "开盘涨幅", "次日盈亏"):
         if t.startswith("+"):
             return "up"
         if t.startswith("-"):
             return "dn"
-    keys = ("状态", "判断", "怎么做", "操作分", "买点", "角色", "竞价判断", "竞价", "价量同向", "流向")
-    if header in keys or header in ("判断",):
-        if any(k in t for k in ("可小仓", "可试仓", "可做", "可买", "抢筹强")):
+    if header in ("状态", "判断", "怎么做", "操作分", "买点", "角色", "竞价判断", "竞价", "价量同向", "流向", "结果"):
+        if any(k in t for k in ("可小仓", "可试仓", "可做", "可买", "抢筹强", "胜")):
             return "ok"
-        if any(k in t for k in ("不买", "不追", "回避", "剔除", "骗炮", "见顶", "板块冷", "砸盘弱")):
+        if any(k in t for k in ("不买", "不追", "回避", "剔除", "骗炮", "见顶", "板块冷", "砸盘弱", "负")):
             return "bad"
         if "观察" in t or "备选" in t or "承接" in t:
             return "watch"

@@ -1734,7 +1734,7 @@ def crawl_macro_news():
 
     def split_pool(items, default_dom=False):
         for t in items:
-            if NEWS_KW_FOREIGN.search(t) and not NEWS_KW_DOMESTIC.search(t):
+            if NEWS_KW_FOREIGN.search(t):
                 foreign.append(t)
             elif NEWS_KW_DOMESTIC.search(t) or NEWS_KW_POLICY.search(t):
                 domestic.append(t)
@@ -1744,7 +1744,7 @@ def crawl_macro_news():
     split_pool(cls_all, default_dom=False)
     split_pool(cls_watch, default_dom=True)
     mixed = []
-    take_em(350, domestic, 8)
+    take_em(350, mixed, 8)
     take_em(344, mixed, 6)
     take_em(351, foreign, 8)
     take_em(357, mixed, 6)

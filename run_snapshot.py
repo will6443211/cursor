@@ -1611,43 +1611,92 @@ def overnight_quotes_live():
 
 NEWS_PATH = os.path.join(ROOT, "reports", "overnight_news.json")
 NEWS_KW_POLICY = re.compile(
-    r"央行|证监会|国务院|发改委|工信部|财政部|降准|降息|加息|美联储|FOMC|规划|印发|利率|关税|财政|货币政策|证监会"
+    r"央行|证监会|国务院|发改委|工信部|财政部|住建|公积金|降准|降息|加息|美联储|FOMC|规划|印发|利率|关税|财政|货币政策"
 )
-NEWS_KW_MKT = re.compile(r"美股|纳指|纳斯达克|标普|道指|黄金|原油|铜|半导体|光模块|CPO|夜盘|期货")
+NEWS_KW_FOREIGN = re.compile(
+    r"美股|纳指|纳斯达克|标普|道指|费城半导体|美联储|FOMC|华尔街|纽约|欧央行|欧洲央行|"
+    r"日经|恒生|原油|WTI|布伦特|黄金|白银|Lumentum|Coherent|SpaceX|特朗普|白宫|"
+    r"五角大楼|伊朗|霍尔木兹|北约|法国|英国首相|加州|沙特|美元|美债|外盘|隔夜"
+)
+NEWS_KW_DOMESTIC = re.compile(
+    r"央行|证监会|国务院|发改委|工信部|财政部|住建|公积金|A股|沪指|上证|深成|创业板|"
+    r"北交所|沪深|两市|涨停|降准|印发|国内|多地|住建部|商务部"
+)
+
+
+def _news_title(it):
+    title = (it.get("title") or it.get("stitle") or "").strip()
+    return re.sub(r"<[^>]+>", "", title)
+
+
+def _news_uniq(xs):
+    out, seen = [], set()
+    for t in xs:
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
 
 
 def crawl_macro_news():
-    """每天从新浪财经滚动里抽外盘/政策/国内标题，让第1/2节不再停在旧笔记。"""
+    """国内+国外隔夜快讯：东财栏目分栏，新浪滚动补外盘。"""
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
-    items = []
-    seen = set()
-    for lid in (2516, 2509, 2515):
-        url = f"https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid={lid}&k=&num=12&page=1"
+    foreign, domestic, mixed = [], [], []
+    sources = []
+
+    def take_em(col, dest, n=8):
+        url = (
+            "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns"
+            f"?client=web&biz=web_news_col&column={col}&order=1&needInteractData=0"
+            f"&page_index=1&page_size={n}&req_trace=1&fields=code,showTime,title,mediaName"
+        )
+        try:
+            d = json.loads(_get(url, {"User-Agent": UA, "Referer": "https://finance.eastmoney.com/"}, 10, 2))
+            lst = ((d.get("data") or {}).get("list") or [])
+            if lst:
+                sources.append("东财")
+            dest.extend(_news_title(it) for it in lst)
+        except Exception:
+            _note_fail("东财新闻")
+
+    def take_sina(pageid, lid, dest, n=10):
+        url = f"https://feed.mix.sina.com.cn/api/roll/get?pageid={pageid}&lid={lid}&k=&num={n}&page=1"
         try:
             d = json.loads(_get(url, {"User-Agent": UA, "Referer": "https://finance.sina.com.cn/"}, 10, 2))
-            for it in ((d.get("result") or {}).get("data") or []):
-                title = (it.get("title") or it.get("stitle") or "").strip()
-                title = re.sub(r"<[^>]+>", "", title)
-                if not title or title in seen:
-                    continue
-                seen.add(title)
-                items.append(title)
+            data = ((d.get("result") or {}).get("data") or [])
+            if data:
+                sources.append("新浪")
+            dest.extend(_news_title(it) for it in data)
         except Exception:
             _note_fail("隔夜新闻")
-    policy, market, domestic = [], [], []
-    for t in items:
-        if NEWS_KW_POLICY.search(t):
-            policy.append(t)
-        elif NEWS_KW_MKT.search(t):
-            market.append(t)
-        else:
+
+    take_em(350, domestic, 8)
+    take_em(344, mixed, 6)
+    take_em(351, foreign, 8)
+    take_em(357, mixed, 6)
+    take_sina(153, 2516, mixed, 12)
+    take_sina(153, 2518, foreign, 10)
+    take_sina(153, 2515, foreign, 8)
+
+    for t in mixed:
+        if NEWS_KW_DOMESTIC.search(t) and not NEWS_KW_FOREIGN.search(t):
             domestic.append(t)
+        elif NEWS_KW_FOREIGN.search(t):
+            foreign.append(t)
+        elif NEWS_KW_POLICY.search(t):
+            domestic.append(t)
+
+    domestic, foreign = _news_uniq(domestic), _news_uniq(foreign)
+    policy = _news_uniq([t for t in domestic + foreign if NEWS_KW_POLICY.search(t)])
+    src = "、".join(dict.fromkeys(sources)) or "新浪财经滚动"
     out = {
         "asof": now.strftime("%Y-%m-%d %H:%M"),
-        "source": "新浪财经滚动",
-        "policy": policy[:8],
-        "market": market[:8],
+        "source": src,
+        "foreign": foreign[:8],
         "domestic": domestic[:8],
+        "policy": policy[:8],
+        "market": foreign[:8],
     }
     try:
         os.makedirs(os.path.dirname(NEWS_PATH), exist_ok=True)
@@ -4671,7 +4720,8 @@ def main():
         codes.append(("sh" if x["market"] == "sh" else "sz") + x["code"])
     live = tencent(codes)
 
-    idx_lines, shapes = [], []
+    idx_lines, shapes, idx_tape = [], [], []
+    idx_short = {"上证指数": "上证", "深证成指": "深成", "创业板指": "创业", "沪深300": "沪深300"}
     for x in idx:
         q = live.get(x["code"])
         if q:
@@ -4680,6 +4730,26 @@ def main():
             idx_lines.append(
                 f"{x['name']} {q['px']:.2f} {q['chg']:+.2f}% 开{q['open']:.2f} 高{q['high']:.2f} 低{q['low']:.2f} {shp} 量比{q['vol_ratio']:.2f}"
             )
+            idx_tape.append({
+                "name": idx_short.get(x["name"], x["name"]),
+                "code": x["code"],
+                "px": round(q["px"], 2),
+                "chg": round(q["chg"], 2),
+                "open": round(q["open"], 2),
+                "high": round(q["high"], 2),
+                "low": round(q["low"], 2),
+                "shape": shp,
+                "vol_ratio": round(q.get("vol_ratio") or 0, 2),
+            })
+        else:
+            idx_tape.append({
+                "name": idx_short.get(x["name"], x["name"]),
+                "code": x["code"], "px": None, "chg": None,
+            })
+    # 顶栏只要四大盘；没有报价也占位，避免空白误以为没跑
+    if not idx_tape:
+        idx_tape = [{"name": n, "px": None, "chg": None} for n in ("上证", "深成", "创业", "沪深300")]
+
 
     ext_map = [
         ("HSI", "恒生"),
@@ -5656,7 +5726,7 @@ def main():
             lines.append("- 隔夜报价续：" + "；".join(ovn[14:]))
     if ext_lines:
         lines.append("- 今日映射：" + "；".join(ext_lines))
-    for x in (news.get("market") or [])[:6]:
+    for x in (news.get("foreign") or news.get("market") or [])[:6]:
         lines.append("- 外盘快讯：" + x)
     for x in (news.get("policy") or [])[:5]:
         if re.search(r"美联储|FOMC|加息|降息|油价|黄金|关税|纳指|美股", x):
@@ -5711,6 +5781,22 @@ def main():
         )
     if sc.get("oil_note"):
         lines.append("- 商品提示：" + sc["oil_note"])
+    frn = news.get("foreign") or news.get("market") or []
+    domn = news.get("domestic") or []
+    lines.append("### 隔夜快讯")
+    lines.append(f"- 抓取 {news.get('asof') or sc.get('fetched') or '—'} · {news.get('source') or '—'}")
+    if frn:
+        lines.append("- **国外**")
+        for x in frn[:6]:
+            lines.append("- " + x)
+    else:
+        lines.append("- **国外**：暂缺")
+    if domn:
+        lines.append("- **国内**")
+        for x in domn[:6]:
+            lines.append("- " + x)
+    else:
+        lines.append("- **国内**：暂缺")
     lines.append("### 领涨主题")
     lines.append("| 序 | 领涨主题 | 态度 | 得分 | 隔夜依据 | 映射自选板块 |")
     lines.append("|---|---|---|---|---|---|")
@@ -5780,11 +5866,21 @@ def main():
         lines.append("- 国内政策调研暂缺")
     lines.append("")
     lines.append("## 3 大盘")
-    if idx_lines:
+    lines.append("- 本轮快照指数已缩到顶栏「分析 / 重跑」右侧（当时价，不是刷新后的实时跳价）。")
+    if idx_tape:
+        bits = []
+        for r in idx_tape:
+            if r.get("px") is None:
+                bits.append(f"{r['name']} —")
+            else:
+                bits.append(f"{r['name']} {r['px']:.0f} {r['chg']:+.2f}%")
+        lines.append("- " + "　".join(bits))
+    elif idx_lines:
         lines.extend("- " + x for x in idx_lines)
     else:
         lines.append("- 指数暂缺")
     lines.append("")
+
     lines.append("## 4 板块资金")
     lines.append("口径：东财行业主力净流入（估算）。流入/流出只定主线热度，不单独开仓。")
     lines.append("### 板块资金流入")
@@ -6218,6 +6314,7 @@ def main():
             "env": {k: mood.get("env", {}).get(k) for k in ("n", "prem", "adv", "green", "ok")},
         },
         "data_health": {"missing_quote": miss_q, "fetch_fail": FETCH_FAIL},
+        "idx_tape": idx_tape,
     }
     open(os.path.join(ROOT, "reports", "latest.json"), "w", encoding="utf-8").write(
         json.dumps(meta, ensure_ascii=False, indent=2)

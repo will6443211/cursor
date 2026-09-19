@@ -36,11 +36,24 @@
     .meta { color:var(--muted); font-size:13px; margin:4px 0 0; line-height:1.5; }
     .meta b { color:#fff; font-family:var(--mono); font-weight:500; letter-spacing:.04em; }
     .toolbar { display:flex; gap:8px; align-items:center; margin:12px 0 8px; }
-    .toolbar input { flex:1 1 120px; min-width:96px; background:#111110; color:#fff;
+    .toolbar input { flex:0 1 120px; min-width:96px; background:#111110; color:#fff;
       border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:16px;
       min-height:44px; }
     .toolbar input:focus { outline:none; border-color:var(--ice); }
     .toolbar .act { flex:0 0 auto; }
+    .idx-tape { display:flex; flex-wrap:wrap; gap:6px; align-items:stretch;
+      flex:1 1 160px; justify-content:flex-end; min-width:0; }
+    .idx-chip {
+      font-family:var(--mono); font-size:11px; line-height:1.25;
+      padding:6px 8px; border-radius:8px; background:#1c1c1a;
+      border:1px solid var(--line); color:#c5c2b6; white-space:nowrap;
+      font-variant-numeric:tabular-nums;
+    }
+    .idx-chip .n { color:var(--muted); margin-right:5px; font-weight:600; letter-spacing:.04em; }
+    .idx-chip .p { color:#f2f1ec; margin-right:4px; }
+    .idx-chip.up { color:#d67a7a; border-color:rgba(214,122,122,.28); }
+    .idx-chip.dn { color:#6fba8d; border-color:rgba(111,186,141,.28); }
+    .idx-chip.flat { color:#c5c2b6; }
     .cards { display:flex; flex-wrap:nowrap; gap:8px; margin:8px 0 4px; overflow-x:auto;
       -webkit-overflow-scrolling:touch; padding-bottom:2px; scrollbar-width:thin; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
@@ -106,6 +119,7 @@
       .cards { flex-wrap:wrap; }
       .card { flex:1 1 140px; min-width:140px; }
       .toolbar input { max-width:168px; font-size:14px; }
+      .idx-chip { font-size:12px; padding:7px 9px; }
     }
     .mob-dock { display:none; }
     @media (max-width:859px) {
@@ -153,7 +167,11 @@
         padding:10px 12px;
         font-size:16px;
       }
-      .mob-row { display:flex; gap:8px; }
+      .mob-dock .idx-tape {
+        justify-content:flex-start; flex-wrap:nowrap; overflow-x:auto;
+        margin:0 0 8px; -webkit-overflow-scrolling:touch;
+      }
+      .mob-dock .idx-chip { font-size:11px; padding:5px 7px; min-height:0; }
       .mob-dock .act, .mob-dock .toggle {
         flex:1 1 0;
         min-width:0;
@@ -184,6 +202,7 @@
         <input id="scan-code" maxlength="16" placeholder="代码或名称" autocomplete="off">
         <button class="act" id="btn-analyze" type="button">分析</button>
         <button class="act warn" id="btn-runall" type="button">重跑自选</button>
+        <div class="idx-tape" id="idx-tape" aria-label="本轮快照大盘"></div>
       </div>
       <div id="report-head">
         <div class="cards" id="cards"></div>
@@ -239,6 +258,7 @@
   </div>
 
   <div class="mob-dock" id="mob-dock">
+    <div class="idx-tape" id="idx-tape-m" aria-label="本轮快照大盘"></div>
     <input id="scan-code-m" maxlength="16" placeholder="代码或名称" autocomplete="off" inputmode="search">
     <div class="mob-row">
       <button class="act" id="btn-analyze-m" type="button">分析</button>
@@ -375,11 +395,29 @@
       if (m) return m[1] + " " + m[2] + " 北京";
       return s || "—";
     }
+    function paintIdxTape(d) {
+      const hx = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+      const rows = d.idx_tape || [];
+      const html = rows.map(r => {
+        const chg = r.chg;
+        const cls = (chg > 0) ? "up" : (chg < 0) ? "dn" : "flat";
+        const px = (r.px == null) ? "—" : Number(r.px).toFixed(0);
+        const chgTxt = (chg == null) ? "" : ((chg>=0?"+":"") + Number(chg).toFixed(2) + "%");
+        const tip = (r.px == null) ? "本轮快照无报价"
+          : `${r.name} ${Number(r.px).toFixed(2)} ${chgTxt} 开${r.open??"—"} 高${r.high??"—"} 低${r.low??"—"} ${r.shape||""} 量比${r.vol_ratio??"—"} · 快照当时`;
+        return `<span class="idx-chip ${cls}" title="${hx(tip)}"><span class="n">${hx(r.name||"")}</span><span class="p">${px}</span>${chgTxt}</span>`;
+      }).join("");
+      ["idx-tape", "idx-tape-m"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = html || `<span class="idx-chip flat">大盘 —</span>`;
+      });
+    }
     function applySnap(d) {
       const t = d.time || d.time_iso || "";
       const clockEl = document.getElementById("clock");
       if (clockEl) clockEl.textContent = fmtBj(t);
-      document.getElementById("meta").textContent = "先看第0节「能不能买」";
+      document.getElementById("meta").textContent = "先看第0节「能不能买」 · 大盘是本轮快照当时价";
+      paintIdxTape(d);
       const top5 = (d.top5 || []).map(x => x.name).join("、") || "—";
       const alt = (d.alt_pool || []).map(x => x.name).join("、") || "—";
       const pick = d.pick_name || "没有";

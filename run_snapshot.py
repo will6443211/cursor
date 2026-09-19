@@ -5478,43 +5478,6 @@ def main():
         lines.append("**最适合买：没有。不开新仓**")
     lines.append(f"**今日最值得买 TOP5：{top5_line}**")
     lines.append(f"**备选池（观察不进最值得买）：{alt_line}**")
-    # 隔夜美股→自选关注（8点预案也用这一块；不改买点闸）
-    ovn_picks = (ovn_scan or {}).get("dragons") or (ovn_scan or {}).get("picks") or []
-    ovn_bias = (ovn_scan or {}).get("bias") or "-"
-    if ovn_picks or (ovn_scan or {}).get("leaders") or (ovn_scan or {}).get("day_boards"):
-        lines.append(f"### 隔夜美股→今日自选关注（{ovn_bias}；只盯不改买点闸）")
-        lead_txt = "、".join(
-            f"{t['theme']}({t['score']:+.2f})" for t in ((ovn_scan or {}).get("leaders") or [])[:4]
-        ) or "无明显领涨"
-        lines.append(f"- 隔夜偏好：**{ovn_bias}** — {(ovn_scan or {}).get('bias_why') or ''}")
-        lines.append(f"- 领涨主题：{lead_txt}")
-        day_b0 = (ovn_scan or {}).get("day_boards") or []
-        if day_b0:
-            lines.append(
-                "- 次日关注板块："
-                + "、".join(
-                    f"{d['line']}({d['attitude']}/{d['money']})"
-                    for d in day_b0 if d.get("in_desk")
-                )
-            )
-        if (ovn_scan or {}).get("oil_note"):
-            lines.append(f"- 商品：{(ovn_scan or {}).get('oil_note')}")
-        lines.append("| 序 | 龙头预案 | 类型 | 板块 | 主题 | 板内 | 态度 |")
-        lines.append("|---|---|---|---|---|---|---|")
-        if not ovn_picks:
-            lines.append("| - | 领涨主题不在自选池 | - | - | - | - | 只记录主题 |")
-        else:
-            for i, p in enumerate(ovn_picks[:8], 1):
-                lines.append(
-                    f"| {i} | {p['name']} | {p['kind']} | {p.get('line') or p.get('board')} | {p['theme']} | {p.get('rank') or '-'} | **{p['attitude']}** |"
-                )
-        avoid = (ovn_scan or {}).get("avoid") or []
-        if avoid:
-            lines.append(
-                "- 隔夜偏弱映射（先回避高开）："
-                + "、".join(f"{a['name']}({a['theme']})" for a in avoid[:6])
-            )
-        lines.append("- 说明：这是隔夜预案，开盘后仍以第0节买点闸+竞价+资金主线为准；隔夜强≠可买。")
     lines.append("| 仓 | 股票 | 价 | 今涨 | 买点 | 主线 | 为什么 | 止损 | 止盈 |")
     lines.append("|---|---|---|---|---|---|---|---|---|")
     n0 = 0

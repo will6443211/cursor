@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Hourly watchlist: external + index + sector flow + MA/volume screen + buy/no-buy."""
-import json, urllib.request, datetime, os, sys, html, re, subprocess, webbrowser
+import json, urllib.request, urllib.parse, hashlib, datetime, os, sys, html, re, subprocess, webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -1616,11 +1616,12 @@ NEWS_KW_POLICY = re.compile(
 NEWS_KW_FOREIGN = re.compile(
     r"美股|纳指|纳斯达克|标普|道指|费城半导体|美联储|FOMC|华尔街|纽约|欧央行|欧洲央行|"
     r"日经|恒生|原油|WTI|布伦特|黄金|白银|Lumentum|Coherent|SpaceX|特朗普|白宫|"
-    r"五角大楼|伊朗|霍尔木兹|北约|法国|英国首相|加州|沙特|美元|美债|外盘|隔夜"
+    r"五角大楼|伊朗|霍尔木兹|北约|法国|英国首相|加州|沙特|美元|美债|外盘|隔夜|"
+    r"英伟达|中概股|Anthropic|甲骨文|纳指走高|港美股|美股收盘|美股盘前|马斯克"
 )
 NEWS_KW_DOMESTIC = re.compile(
     r"央行|证监会|国务院|发改委|工信部|财政部|住建|公积金|A股|沪指|上证|深成|创业板|"
-    r"北交所|沪深|两市|涨停|降准|印发|国内|多地|住建部|商务部"
+    r"北交所|沪深|两市|涨停|连板|主力资金|降准|印发|国内|多地|住建部|商务部"
 )
 
 
@@ -1639,11 +1640,66 @@ def _news_uniq(xs):
     return out
 
 
+def _cls_sign(params):
+    """财联社网页签名：参数按键排序，SHA1 后再 MD5。对照 RSSHub lib/routes/cls/utils.ts。"""
+    items = sorted((k, str(v)) for k, v in params.items() if v not in (None, ""))
+    qs = urllib.parse.urlencode(items)
+    sign = hashlib.md5(hashlib.sha1(qs.encode()).hexdigest().encode()).hexdigest()
+    return qs + "&sign=" + sign
+
+
+def _cls_headline(it):
+    title = re.sub(r"<[^>]+>", "", (it.get("title") or "").strip())
+    if title:
+        return title
+    content = re.sub(r"<[^>]+>", "", (it.get("content") or "").strip())
+    m = re.match(r"【([^】]+)】", content)
+    if m:
+        return m.group(1).strip()
+    content = re.sub(r"^财联社\d+月\d+日电，?", "", content)
+    return (content.split("。", 1)[0] or content)[:80].strip()
+
+
 def crawl_macro_news():
-    """国内+国外隔夜快讯：东财栏目分栏，新浪滚动补外盘。"""
+    """国内+国外隔夜快讯：财联社电报为主，东财/新浪补栏。"""
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     foreign, domestic, mixed = [], [], []
     sources = []
+    cls_hdr = {
+        "User-Agent": UA,
+        "Referer": "https://www.cls.cn/telegraph",
+        "Accept": "application/json, text/plain, */*",
+    }
+
+    def take_cls(dest, extra=None, path="/api/cache", n=20):
+        params = {"appName": "CailianpressWeb", "os": "web", "sv": "8.7.9"}
+        if extra:
+            params.update(extra)
+        url = "https://www.cls.cn" + path + "?" + _cls_sign(params)
+        try:
+            d = json.loads(_get(url, cls_hdr, 10, 2))
+            if str(d.get("errno") or 0) not in ("0", "0.0"):
+                _note_fail("财联社")
+                return
+            data = d.get("data") or {}
+            if isinstance(data, list):
+                roll = data
+            else:
+                roll = data.get("roll_data") or []
+            got = 0
+            for it in roll:
+                if not isinstance(it, dict):
+                    continue
+                t = _cls_headline(it)
+                if t:
+                    dest.append(t)
+                    got += 1
+                if got >= n:
+                    break
+            if got:
+                sources.append("财联社")
+        except Exception:
+            _note_fail("财联社")
 
     def take_em(col, dest, n=8):
         url = (
@@ -1671,6 +1727,23 @@ def crawl_macro_news():
         except Exception:
             _note_fail("隔夜新闻")
 
+    cls_all, cls_watch = [], []
+    take_cls(cls_all, {"name": "telegraph"}, "/api/cache", 20)
+    take_cls(foreign, {"category": "hk_us", "refresh_type": "1", "rn": "16"}, "/v1/roll/get_roll_list", 12)
+    take_cls(cls_watch, {"category": "watch", "refresh_type": "1", "rn": "12"}, "/v1/roll/get_roll_list", 8)
+
+    def split_pool(items, default_dom=False):
+        for t in items:
+            if NEWS_KW_FOREIGN.search(t) and not NEWS_KW_DOMESTIC.search(t):
+                foreign.append(t)
+            elif NEWS_KW_DOMESTIC.search(t) or NEWS_KW_POLICY.search(t):
+                domestic.append(t)
+            elif default_dom:
+                domestic.append(t)
+
+    split_pool(cls_all, default_dom=False)
+    split_pool(cls_watch, default_dom=True)
+    mixed = []
     take_em(350, domestic, 8)
     take_em(344, mixed, 6)
     take_em(351, foreign, 8)
@@ -1678,14 +1751,7 @@ def crawl_macro_news():
     take_sina(153, 2516, mixed, 12)
     take_sina(153, 2518, foreign, 10)
     take_sina(153, 2515, foreign, 8)
-
-    for t in mixed:
-        if NEWS_KW_DOMESTIC.search(t) and not NEWS_KW_FOREIGN.search(t):
-            domestic.append(t)
-        elif NEWS_KW_FOREIGN.search(t):
-            foreign.append(t)
-        elif NEWS_KW_POLICY.search(t):
-            domestic.append(t)
+    split_pool(mixed, default_dom=False)
 
     domestic, foreign = _news_uniq(domestic), _news_uniq(foreign)
     policy = _news_uniq([t for t in domestic + foreign if NEWS_KW_POLICY.search(t)])

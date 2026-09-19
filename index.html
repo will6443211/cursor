@@ -20,9 +20,9 @@
     html, body { margin:0; height:100%; height:100dvh; color:var(--ink); font-family:var(--font);
       overflow:hidden; background:var(--bg); }
     .layout { height:100%; display:flex; flex-direction:column; min-height:0; }
-    .top { flex:0 0 auto; padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;
-      border-bottom:1px solid var(--line); background:rgba(17,17,16,.94);
-      backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); }
+    .top { flex:0 0 auto; position:relative; z-index:5;
+      padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;
+      border-bottom:1px solid var(--line); background:#111110; }
     .brand { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
     .eyebrow { font-size:12px; letter-spacing:.12em; color:var(--ice); margin:0 0 4px; font-weight:600; }
     .top h1 { margin:0; font-size:22px; font-weight:700; letter-spacing:0; color:#fff; line-height:1.4; }
@@ -63,8 +63,8 @@
       padding:8px 12px; cursor:pointer; min-height:40px; font-weight:650; }
     .links a { color:var(--ice); text-decoration:none; }
     .links a:hover { text-decoration:underline; text-underline-offset:3px; }
-    iframe { width:100%; height:100%; border:0; background:#111110; display:block; }
-    .stage { flex:1; min-height:0; }
+    iframe { width:100%; height:100%; border:0; background:#111110; display:block; position:relative; z-index:0; }
+    .stage { flex:1; min-height:0; position:relative; z-index:0; isolation:isolate; }
     .panel { display:none; flex:1; min-height:0; overflow:auto; }
     .panel.on { display:flex; flex-direction:column; }
     #panel-watch.on { display:block; }
@@ -108,23 +108,45 @@
       .toolbar input { max-width:168px; font-size:14px; }
     }
     @media (max-width:859px) {
-      .drawer { width:100vw; border-left:0; }
+      .drawer { width:100vw; border-left:0; z-index:96; }
       .eyebrow { display:none; }
-      .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px; }
+      .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 10px; }
       .top h1 { font-size:18px; line-height:1.4; }
       .clock { font-size:14px; }
       .meta { font-size:12px; }
       .cards { display:none; }
       .links { margin:4px 0 0; font-size:12px; }
       body.watch #toolbar { display:none !important; }
+      /* 不要钉在底部：iOS iframe 会盖住 position:fixed，backdrop-filter 还会把 fixed 困在顶栏里 */
       .toolbar {
-        position:fixed; left:0; right:0; bottom:0; z-index:85;
-        margin:0; gap:8px;
-        padding:10px 10px calc(10px + env(safe-area-inset-bottom,0px));
-        background:#111110; border-top:1px solid var(--line);
+        position:static;
+        display:flex;
+        flex-wrap:wrap;
+        margin:10px 0 0;
+        padding:0;
+        gap:8px;
+        background:transparent;
+        border:0;
       }
-      .layout { padding-bottom:calc(66px + env(safe-area-inset-bottom,0px)); }
-      body.watch .layout { padding-bottom:0; }
+      .toolbar input {
+        flex:1 1 100%;
+        width:100%;
+        min-width:0;
+        max-width:none;
+      }
+      .toolbar button.act {
+        flex:1 1 calc(50% - 4px);
+        min-width:0;
+      }
+      .bar {
+        flex-direction:column;
+        align-items:stretch;
+      }
+      .bar input, .bar select, .bar button.act {
+        width:100%;
+        max-width:none;
+      }
+      .toggle { flex:0 0 auto; }
     }
   </style>
 </head>

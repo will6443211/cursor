@@ -130,7 +130,7 @@
       .top h1 { font-size:18px; line-height:1.4; }
       .clock { font-size:14px; }
       .meta { font-size:12px; }
-      .cards { display:none; }
+      .cards { display:flex; flex-wrap:nowrap; overflow-x:auto; }
       .links { margin:4px 0 0; font-size:12px; }
       /* 苹果 Chrome 的 iframe 会盖住页面上的 fixed 底栏，搜索分析改放顶栏，报告改内嵌滚动 */
       .top .toggle { background:#f2f1ec; color:#111110; }
@@ -435,6 +435,7 @@
             return extra ? (x.line + " " + extra) : x.line;
           }).join("、")
         : ((d.avoid || []).join("、") || "无（自选对口未净出）");
+      const desk = d.ovn_desk || {};
       const cards = [
         ["能不能买", (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不")],
         ["总闸", d.buy_today || "—", cls(d.buy_today)],
@@ -442,10 +443,11 @@
         ["最值得买", top5, ""],
         ["可做主线", (d.doable || []).join("、") || "—", "ok"],
         ["回避主线", avoidBits, "bad"],
+        ["隔夜盘面", [desk.bias, desk.tape].filter(Boolean).join(" · ") || "—", "watchc"],
+        ["次日板块", (desk.boards || []).join("、") || "暂无映射", ""],
+        ["次日个股", (desk.names || []).join("、") || "先看板块", ""],
+        ["隔夜消息", desk.news || "快讯暂缺", "watchc"],
       ];
-      if (d.avoid_note) {
-        cards.push(["回避口径", d.avoid_note, "watchc"]);
-      }
       document.getElementById("cards").innerHTML = cards.map(([k,v,c]) =>
         `<div class="card"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`
       ).join("");

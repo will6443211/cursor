@@ -1520,7 +1520,6 @@ def _yahoo_bar(sym):
 SINA_MAP = {
     "^DJI": ("gb_dji", "us"), "^GSPC": ("gb_inx", "us"), "^IXIC": ("gb_ixic", "us"),
     "^SOX": ("gb_sox", "us"), "^N225": ("int_nikkei", "int"), "^HSI": ("int_hangseng", "int"),
-    "EWY": ("gb_ewy", "us"),  # 韩国综指直连常空，用韩国ETF作代理
     "SMH": ("gb_smh", "us"), "XLK": ("gb_xlk", "us"), "XLF": ("gb_xlf", "us"),
     "XLE": ("gb_xle", "us"), "XLV": ("gb_xlv", "us"), "IBB": ("gb_ibb", "us"),
     "XLB": ("gb_xlb", "us"), "XLI": ("gb_xli", "us"), "XLY": ("gb_xly", "us"),
@@ -1584,6 +1583,20 @@ def _sina_chg(code, parts, kind):
     return None
 
 
+def _kospi_bar():
+    """Naver 实时 KOSPI。nv/cv 为指数×100。"""
+    url = "https://polling.finance.naver.com/api/realtime?query=SERVICE_INDEX:KOSPI"
+    d = json.loads(_get(url, {"User-Agent": UA, "Referer": "https://finance.naver.com/"}, 8, 2))
+    row = (((d.get("result") or {}).get("areas") or [{}])[0].get("datas") or [{}])[0]
+    last = float(row["nv"]) / 100.0
+    chg_pt = float(row.get("cv") or 0) / 100.0
+    prev = last - chg_pt
+    chg = float(row.get("cr") or 0)
+    if not prev:
+        return None
+    return last, prev, chg
+
+
 def overnight_quotes_live():
     """一次拉齐美股指数/板块ETF、原油金银铜、光通信个股、国内期货。返回 yahoo符号 -> bar。"""
     codes = [v[0] for v in SINA_MAP.values()] + list(SINA_EXTRA)
@@ -1598,6 +1611,12 @@ def overnight_quotes_live():
         bar = _sina_chg(scode, blob.get(scode) or [], kind)
         if bar:
             extra[scode] = {"name": name, "last": bar[0], "prev": bar[1], "chg": bar[2], "sym": scode}
+    try:
+        kbar = _kospi_bar()
+        if kbar:
+            by_sym["^KS11"] = kbar
+    except Exception:
+        _note_fail("KOSPI")
     missing = [s for s in SINA_MAP if s not in by_sym]
     if missing:
         with ThreadPoolExecutor(max_workers=6) as ex:
@@ -1631,13 +1650,37 @@ def _news_title(it):
     return re.sub(r"<[^>]+>", "", title)
 
 
+def _news_key(t):
+    s = re.sub(r"^(财联社|每日经济新闻|证券时报|证券日报|上海证券报|中国证券报|第一财经)\d*月?\d*日?电?，?", "", t or "")
+    s = re.sub(r"[^\w\u4e00-\u9fff]+", "", s)
+    return s[:20]
+
+
 def _news_uniq(xs):
     out, seen = [], set()
     for t in xs:
-        if not t or t in seen:
+        if not t:
+            continue
+        k = _news_key(t)
+        if t in seen or (k and k in seen):
             continue
         seen.add(t)
+        if k:
+            seen.add(k)
         out.append(t)
+    return out
+
+
+def _news_pick(items, n, seen):
+    out = []
+    for t in items or []:
+        k = _news_key(t) or t
+        if not t or k in seen:
+            continue
+        seen.add(k)
+        out.append(t)
+        if len(out) >= n:
+            break
     return out
 
 
@@ -1729,9 +1772,9 @@ def crawl_macro_news():
             _note_fail("隔夜新闻")
 
     cls_all, cls_watch = [], []
-    take_cls(cls_all, {"name": "telegraph"}, "/api/cache", 20)
-    take_cls(foreign, {"category": "hk_us", "refresh_type": "1", "rn": "16"}, "/v1/roll/get_roll_list", 12)
-    take_cls(cls_watch, {"category": "watch", "refresh_type": "1", "rn": "12"}, "/v1/roll/get_roll_list", 8)
+    take_cls(cls_all, {"name": "telegraph"}, "/api/cache", 32)
+    take_cls(foreign, {"category": "hk_us", "refresh_type": "1", "rn": "24"}, "/v1/roll/get_roll_list", 18)
+    take_cls(cls_watch, {"category": "watch", "refresh_type": "1", "rn": "16"}, "/v1/roll/get_roll_list", 12)
 
     def split_pool(items, default_dom=False):
         for t in items:
@@ -1745,13 +1788,13 @@ def crawl_macro_news():
     split_pool(cls_all, default_dom=False)
     split_pool(cls_watch, default_dom=True)
     mixed = []
-    take_em(350, mixed, 8)
-    take_em(344, mixed, 6)
-    take_em(351, foreign, 8)
-    take_em(357, mixed, 6)
-    take_sina(153, 2516, mixed, 12)
-    take_sina(153, 2518, foreign, 10)
-    take_sina(153, 2515, foreign, 8)
+    take_em(350, mixed, 12)
+    take_em(344, mixed, 8)
+    take_em(351, foreign, 12)
+    take_em(357, mixed, 8)
+    take_sina(153, 2516, mixed, 16)
+    take_sina(153, 2518, foreign, 14)
+    take_sina(153, 2515, foreign, 12)
     split_pool(mixed, default_dom=False)
 
     domestic, foreign = _news_uniq(domestic), _news_uniq(foreign)
@@ -1760,10 +1803,10 @@ def crawl_macro_news():
     out = {
         "asof": now.strftime("%Y-%m-%d %H:%M"),
         "source": src,
-        "foreign": foreign[:8],
-        "domestic": domestic[:8],
+        "foreign": foreign[:14],
+        "domestic": domestic[:14],
         "policy": policy[:8],
-        "market": foreign[:8],
+        "market": foreign[:14],
     }
     try:
         os.makedirs(os.path.dirname(NEWS_PATH), exist_ok=True)
@@ -1888,7 +1931,7 @@ def overnight_scan(stocks=None, etfs=None):
     """隔夜美股指数+板块ETF+金属原油扫描，并映射到自选次日关注。"""
     idx_specs = [
         ("^DJI", "道指"), ("^GSPC", "标普"), ("^IXIC", "纳指"), ("^SOX", "费城半导体"),
-        ("^N225", "日经"), ("^HSI", "恒生"), ("EWY", "韩国"),
+        ("^N225", "日经225"), ("^HSI", "恒生"), ("^KS11", "KOSPI"),
     ]
     sector_specs = [
         ("SMH", "半导体ETF"), ("XLK", "科技ETF"), ("XLF", "金融ETF"),
@@ -2202,7 +2245,7 @@ def line_of_board(board):
 
 
 def overnight_follow_desk(ovn, stocks, etfs, rows, etf_rows, yz_by_code, inn, outf, inn_lines, out_lines):
-    """隔夜主题 → 次日国内关注板块 → 自选龙头预案。只写 1b，不进买点闸/表一/7a。"""
+    """隔夜主题 → 次日国内关注板块 → 自选龙头预案。只写第1节，不进买点闸/表一/7a。"""
     ovn = dict(ovn or {})
     themes = list(ovn.get("themes") or [])
     leaders = list(ovn.get("leaders") or [])
@@ -4881,14 +4924,13 @@ def main():
     idx_tape.append(_idx_chip("恒生", live.get("HSI"), ovn_idx.get("恒生"), "HSI"))
     idx_tape.append(_idx_chip("科创50", live.get("000688"), code="000688"))
     q_us = live.get(".IXIC") or live.get("IXIC")
-    idx_tape.append(_idx_chip("美国", q_us, ovn_idx.get("纳指"), "IXIC"))
-    idx_tape.append(_idx_chip("日本", None, ovn_idx.get("日经"), "N225"))
-    q_kr = live.get("EWY.AM") or live.get("EWY")
-    idx_tape.append(_idx_chip("韩国", q_kr, ovn_idx.get("韩国"), "EWY"))
+    idx_tape.append(_idx_chip("纳指", q_us, ovn_idx.get("纳指"), "IXIC"))
+    idx_tape.append(_idx_chip("日经225", None, ovn_idx.get("日经225") or ovn_idx.get("日经"), "N225"))
+    idx_tape.append(_idx_chip("KOSPI", None, ovn_idx.get("KOSPI"), "KS11"))
     idx_tape.append(_idx_chip("美半", None, ovn_idx.get("费城半导体"), "SOX"))
     if not any(r.get("px") is not None for r in idx_tape):
         idx_tape = [{"name": n, "px": None, "chg": None} for n in
-                    ("上证", "深成", "创业", "沪深300", "恒生", "科创50", "美国", "日本", "韩国", "美半")]
+                    ("上证", "深成", "创业", "沪深300", "恒生", "科创50", "纳指", "日经225", "KOSPI", "美半")]
 
 
     def one_name(s, asset="stock"):
@@ -5053,6 +5095,34 @@ def main():
         )
     except Exception:
         pass
+    news_now = (ovn_scan or {}).get("news") or load_macro_news() or {}
+    metal_pick = []
+    for r in (ovn_scan or {}).get("metals") or []:
+        if r.get("name") in ("黄金", "沪金", "WTI原油", "布伦特", "铜", "沪铜"):
+            metal_pick.append(f"{r['name']}{r['chg']:+.2f}%")
+    tape_bits = []
+    for r in idx_tape:
+        if r["name"] in ("上证", "纳指", "日经225", "KOSPI", "美半", "恒生") and r.get("px") is not None:
+            tape_bits.append(f"{r['name']}{r['chg']:+.2f}%")
+    tape_bits.extend(metal_pick[:4])
+    all_day_b = (ovn_scan or {}).get("day_boards") or []
+    day_b = [d for d in all_day_b if d.get("in_desk")]
+    if len(day_b) < 5:
+        day_b = day_b + [d for d in all_day_b if d not in day_b][: 5 - len(day_b)]
+    news_seen = set()
+    news_bits = (
+        _news_pick(news_now.get("policy"), 1, news_seen)
+        + _news_pick(news_now.get("foreign"), 2, news_seen)
+        + _news_pick(news_now.get("domestic"), 2, news_seen)
+    )
+    ovn_desk = {
+        "bias": (ovn_scan or {}).get("bias") or "-",
+        "bias_why": (ovn_scan or {}).get("bias_why") or "",
+        "tape": "；".join(tape_bits[:8]),
+        "boards": [f"{d['line']}({d.get('attitude') or '-'})" for d in day_b[:6]],
+        "names": [p["name"] for p in ((ovn_scan or {}).get("dragons") or (ovn_scan or {}).get("picks") or [])[:6]],
+        "news": "；".join(news_bits),
+    }
     etf_yz = []
     for s, q, f, yld, hist in etf_rows:
         if not q:
@@ -5760,63 +5830,35 @@ def main():
     lines.append("")
     ovn_blk = MACRO.get("overnight_external") or {}
     news = (sc := (ovn_scan or {})).get("news") or load_macro_news() or {}
-    lines.append("## 1 外盘隔夜")
+    lines.append("## 1 隔夜")
+    lines.append(
+        "外盘报价、商品、快讯和次日映射写在这一节，不再拆成多块标题。"
+        "只盯不改买点闸，不进表一分/7a。"
+    )
     src = sc.get("source") or ""
     fetched = sc.get("fetched") or news.get("asof") or ""
     nq = sc.get("n_quotes") or 0
-    lines.append(f"- 今日抓取：{fetched or '—'}  源：{src or '—'}  报价{nq}条。Yahoo 不通时走新浪美股/期货。")
-    if sc.get("_from_cache"):
-        lines.append("- 报价来源：缓存（实时未拉满，用上一份有效隔夜）")
-    if ovn:
-        lines.append("- 隔夜报价：" + "；".join(ovn[:14]))
-        if len(ovn) > 14:
-            lines.append("- 隔夜报价续：" + "；".join(ovn[14:]))
-    if ext_lines:
-        lines.append("- 今日映射：" + "；".join(ext_lines))
-    for x in (news.get("foreign") or news.get("market") or [])[:6]:
-        lines.append("- 外盘快讯：" + x)
-    for x in (news.get("policy") or [])[:5]:
-        if re.search(r"美联储|FOMC|加息|降息|油价|黄金|关税|纳指|美股", x):
-            lines.append("- 政策快讯：" + x)
-    note_asof = str(MACRO.get("asof") or "")
-    today_s = now.strftime("%Y-%m-%d")
-    if note_asof and note_asof < today_s:
-        lines.append(f"- 背景笔记截至 {note_asof}，不是今日盘面。方向：" + (ovn_blk.get("implication") or ovn_blk.get("direction") or "—"))
-    elif MACRO.get("fed"):
-        lines.append("- " + MACRO["fed"])
-        if ovn_blk.get("implication"):
-            lines.append("- 对今天：" + ovn_blk["implication"])
-    if not (ovn or news.get("market") or ext_lines):
-        lines.append("- 外盘调研暂缺")
-    lines.append("")
-    lines.append("## 1b 隔夜映射")
-    lines.append(
-        "隔夜预案只写在这里，不进第0节。美股指数 + 行业ETF领涨/领跌 + 黄金/白银/铜/原油 + 光通信美股(LITE/COHR)。"
-        "先定次日国内关注板块，再从自选里筛龙头。只盯不改买点闸，不进表一分/7a。"
-    )
-    sc = ovn_scan or {}
+    lines.append(f"- 抓取 {fetched or '—'} · 报价源 {src or '—'} · {nq}条 · 快讯 {(news.get('source') or '—')}")
     lines.append(f"- 隔夜偏好：**{sc.get('bias') or '-'}** — {sc.get('bias_why') or ''}")
     if sc.get("_from_cache"):
-        lines.append("- 报价来源：缓存（实时未拉满）")
-    elif sc.get("source"):
-        lines.append(f"- 报价来源：{sc.get('source')} {sc.get('fetched') or ''}")
+        lines.append("- 报价来源：缓存（实时未拉满，用上一份有效隔夜）")
     if sc.get("indices"):
         lines.append(
-            "- 美股/亚太指数："
-            + "；".join(f"{r['name']} {r['chg']:+.2f}%" for r in sc["indices"])
+            "- 指数："
+            + "；".join(f"{r['name']} {r['last']:.2f} {r['chg']:+.2f}%" for r in sc["indices"])
         )
     if sc.get("sectors"):
-        top_s = sc["sectors"][:5]
+        top_s = sc["sectors"][:6]
         bot_s = list(reversed(sc["sectors"][-4:])) if len(sc["sectors"]) >= 4 else []
         lines.append("- 美股板块领涨：" + "；".join(f"{r['name']} {r['chg']:+.2f}%" for r in top_s))
         if bot_s:
             lines.append("- 美股板块领跌：" + "；".join(f"{r['name']} {r['chg']:+.2f}%" for r in bot_s))
     if sc.get("metals"):
         lines.append(
-            "- 金属/原油/美元债："
+            "- 黄金/期货："
             + "；".join(
                 f"{r['name']} {r['last']:.2f}({r['chg']:+.2f}%)"
-                if r["sym"] != "^TNX"
+                if r.get("sym") != "^TNX"
                 else f"{r['name']} {r['last']:.3f}%({r['chg']:+.1f}bp)"
                 for r in sc["metals"]
             )
@@ -5830,20 +5872,29 @@ def main():
         lines.append("- 商品提示：" + sc["oil_note"])
     frn = news.get("foreign") or news.get("market") or []
     domn = news.get("domestic") or []
-    lines.append("### 隔夜快讯")
-    lines.append(f"- 抓取 {news.get('asof') or sc.get('fetched') or '—'} · {news.get('source') or '—'}")
-    if frn:
-        lines.append("- **国外**")
-        for x in frn[:6]:
+    pol = news.get("policy") or []
+    news_seen = set()
+    pol_show = _news_pick(pol, 6, news_seen)
+    frn_show = _news_pick(frn, 10, news_seen)
+    dom_show = _news_pick(domn, 10, news_seen)
+    if pol_show:
+        lines.append("- **政策**")
+        for x in pol_show:
             lines.append("- " + x)
-    else:
-        lines.append("- **国外**：暂缺")
-    if domn:
-        lines.append("- **国内**")
-        for x in domn[:6]:
+    if frn_show:
+        lines.append("- **国外快讯**")
+        for x in frn_show:
             lines.append("- " + x)
-    else:
-        lines.append("- **国内**：暂缺")
+    if dom_show:
+        lines.append("- **国内快讯**")
+        for x in dom_show:
+            lines.append("- " + x)
+    if not (pol_show or frn_show or dom_show):
+        lines.append("- 快讯暂缺")
+    note_asof = str(MACRO.get("asof") or "")
+    today_s = now.strftime("%Y-%m-%d")
+    if note_asof and note_asof < today_s and ovn_blk.get("implication"):
+        lines.append(f"- 背景笔记截至 {note_asof}：" + ovn_blk.get("implication"))
     lines.append("### 领涨主题")
     lines.append("| 序 | 领涨主题 | 态度 | 得分 | 隔夜依据 | 映射自选板块 |")
     lines.append("|---|---|---|---|---|---|")
@@ -5873,7 +5924,7 @@ def main():
             lines.append(
                 f"| {i} | **{d['line']}** | {d['theme']} | **{d['attitude']}** | {d['money']} | {d['why']} |"
             )
-    lines.append("### 龙头预案")
+    lines.append("### 次日关注个股")
     lines.append("| 序 | 推荐自选 | 类型 | 板块 | 主题 | 板内 | 态度 | 为什么 |")
     lines.append("|---|---|---|---|---|---|---|---|")
     dragons = sc.get("dragons") or []
@@ -6289,7 +6340,7 @@ def main():
             }
             for x in desk_avoid[:10]
         ],
-        "avoid_note": "回避只看该线东财主力净流出，不看涨幅热不热；涨得好也可以回避。不把光通信/半导体和PCB绑在一起。",
+        "ovn_desk": ovn_desk,
         "can_small": can_small,
         "watch": watch,
         "small_on_line": small_on_line,
@@ -6477,8 +6528,7 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         f"<style>{css}</style></head><body>",
         "<nav class=toc>",
         "<a href='#s0'>0 能不能买</a>",
-        "<a href='#s1'>1 外盘隔夜</a>",
-        "<a href='#s1b'>1b 隔夜映射</a>",
+        "<a href='#s1'>1 隔夜</a>",
         "<a href='#s4'>4 板块资金</a>",
         "<a href='#s4b'>4b 集合竞价</a>",
         "<a href='#s5'>5 个股一览</a>",

@@ -5506,8 +5506,8 @@ def main():
     left_names = [x.split()[0] for x in left_ok]
     if left_names:
         buy_line += f"；左侧轻仓试：{'、'.join(left_names[:4])}"
-    # 第14节「综合结论」过去只用趋势池的 name_call 推，游资/打板/ETF 过闸的票抬不动它，
-    # 于是同一份报告第0节说「可以买」、第14节说「不买」。现在统一用同一批过闸名单。
+    # 第13节「综合结论」过去只用趋势池的 name_call 推，游资/打板/ETF 过闸的票抬不动它，
+    # 于是同一份报告第0节说「可以买」、第13节说「不买」。现在统一用同一批过闸名单。
     if buy_bits:
         buy_today = "可小仓"
         buy_reason.append("综合结论与第0节同一套闸：过闸的是 " + "、".join(buy_bits))
@@ -5966,7 +5966,7 @@ def main():
         )
     lines.append("- 用法：早上8点先看本节定关注名单；9:30后用第0节买点+竞价+资金主线确认，隔夜推荐不能单独开仓。")
     lines.append("")
-    lines.append("## 4 板块资金")
+    lines.append("## 2 板块资金")
     lines.append("口径：东财行业主力净流入（估算）。流入/流出只定主线热度，不单独开仓。")
     lines.append("### 板块资金流入")
     lines.append("| 序 | 板块 | 涨跌 | 主力净流入 | 领涨 |")
@@ -6007,7 +6007,7 @@ def main():
         lines.append("- 相关ETF/指数：" + "；".join(etf_heat))
     lines.append("- 东财暗盘/板块资金是模型估算，不是交易所盘前成交。")
     lines.append("")
-    lines.append("## 4b 集合竞价")
+    lines.append("## 3 集合竞价")
     lines.append("框架：开幅（高开/低开）+ 竞价量比（首分钟量÷20日均分钟量）+ 开后是否站开盘 + 高低位。主流量价：高开放量偏抢筹，高开缩量/破开盘偏骗炮，低开放量偏砸，低开翻红看承接。9:15-9:20可撤单噪声大，开盘价以9:25撮合为准；开后3-5分钟再验证。")
     auc_rank = {"抢筹强": 0, "承接关注": 1, "正常": 2, "砸盘弱": 3, "骗炮警惕": 4, "竞价缺": 5}
     auc_rows = []
@@ -6051,7 +6051,7 @@ def main():
             return "上20"
         return "弱"
 
-    lines.append(f"## 5 个股一览（全池{len(t1_all)}只，趋势{n_trend}+游资{n_youzi}）")
+    lines.append(f"## 4 个股一览（全池{len(t1_all)}只，趋势{n_trend}+游资{n_youzi}）")
     lines.append("买点=能不能买。分=均线健康。买点分=九列。值分=闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价±3。买点分不重复加。竞价列只展示判断，不单独改买点。表一买点与明细标的相同，只保留明细（含买点表多出来的竞价/值序/为什么）。")
     lines.append("### 表一明细（买点+均线九列）")
     lines.append("| 序 | 股票 | 买点 | 竞价 | 类型 | 现价 | 今涨 | 分 | 买点分 | 值分 | 值序 | 均线 | 量比 | 距20日高 | 斜率 | 回踩 | 相对强度 | 板块RS | 量价 | ORB | 昨高 | 布林 | 换手分位 | 仓位 | 为什么 |")
@@ -6104,13 +6104,13 @@ def main():
     if not etf_t1:
         lines.append("| - | ETF报价暂缺 | - | - | - | - | - | - | - | - | - | - | - | - | - |")
     lines.append("")
-    lines.append("## 6 趋势复核")
+    lines.append("## 5 趋势复核")
     if pick_lines:
         lines.extend("- " + x for x in pick_lines)
     else:
         lines.append("- 无合格筛选结果")
     lines.append("")
-    lines.append("## 7 游资打分")
+    lines.append("## 6 游资打分")
     lines.append("因子（7项+追高罚）：板块资金0.10｜资金合成0.30（今主力+5日+涨幅同向，同一口径合并计一次）｜游资弹性0.18（小市值+归一量比+振幅）｜涨停空间0.10｜竞价质量0.12｜低位启动0.10｜承接质量0.10（分时均价+封单额/封成比+开板次数）。量比已按时段归一，早盘不再天然高分。")
     lines.append(mood.get("txt") or "情绪：暂缺")
     lines.append("换手/竞价量/弱转强/超大单/题材板/昨龙虎/连板/昨ZT溢价/板内排名/竞价额/换手市值是加列和环境，不进 7 因子分、不改怎么做。")
@@ -6167,7 +6167,7 @@ def main():
             hint = "7a已过65，挡在门外的是总闸（回避/量能/追高等），不是分数不够"
         lines.append(f"- 新易盛：7a {yz['score']:.0f}，买点 **{call}**（{why}）。{hint}。")
     lines.append("")
-    lines.append("## 8 左侧超跌")
+    lines.append("## 7 左侧超跌")
     lines.append("进池/左侧分仍是原公式：乖离/RSI/距前高超跌 + 收阳或长下影止跌 + 放量承接。斐波那契只标注。趋势可试仓额外要求：均线走平、且 RSI拐头或缩量再放量或二探不破；大盘偏弱则趋势票只观察。游资左侧不要求均线走平。失败：破今日低或 ATR。类型列区分趋势/游资。")
     left_merged = left_ranked
     lines.append(f"### 8 左侧超跌（趋势{len(left_trend)}+游资{len(left_youzi)}，共{len(left_merged)}只）")
@@ -6183,7 +6183,7 @@ def main():
                 f"| {n} | {s['name']} | {ls['kind']} | {ls['pos']} | {ls.get('fib') or '-'} | {ls['factor']} | {ls.get('confirm') or '-'} | {ls['line']}/{ls['line_st']} | **{ls['score']:.0f}** | **{ls['call']}** | {ls['how']} |"
             )
     lines.append("")
-    lines.append("## 9 暗盘资金")
+    lines.append("## 8 暗盘资金")
     lines.append("口径：个股今主力/超大单/5日主力代理（东财估算），不是交易所盘前暗盘成交。流入=今主力>0，流出=今主力<0。")
     yz_flow = sorted(yz_youzi, key=lambda r: -((r[4].get("main") or 0)))
     lines.append("### 暗盘资金流入")
@@ -6212,7 +6212,7 @@ def main():
         lines.append("| - | 游资池暂无主力净流出 | - | - | - | - | - | - | - | - | - |")
     lines.append("- 涨但主力出=出货嫌疑，7a会降怎么做；暗盘流入≠可买，仍过第0节闸。")
     lines.append("")
-    lines.append("## 10 重点跟踪")
+    lines.append("## 9 重点跟踪")
     if key_lines:
         lines.extend("- " + x for x in key_lines)
     else:
@@ -6249,20 +6249,20 @@ def main():
     else:
         lines.append("- 打板可小仓：没有。宁缺毋滥。")
     lines.append("")
-    lines.append("## 11 主线方向")
+    lines.append("## 10 主线方向")
     lines.append("- 口径：板块冷/热看东财行业主力净流入，不是看涨幅热门。回避=该线自己资金净出。亨通跟CPO，和光模块放在光通信；东财通信线缆流出不把CPO打冷。元件/PCB流出不连坐光通信、半导体、液冷。三花=热管理。中材=玻纤。太极=半导体封测。")
     lines.extend("- " + x for x in line_block)
     lines.append("")
-    lines.append("## 12 个股对照")
+    lines.append("## 11 个股对照")
     if overlay_lines:
         lines.extend("- " + x for x in overlay_lines)
     else:
         lines.append("- 无")
     lines.append("")
-    lines.append("## 13 今日时点")
+    lines.append("## 12 今日时点")
     lines.extend("- " + x for x in time_bits)
     lines.append("")
-    lines.append("## 14 买点明细")
+    lines.append("## 13 买点明细")
     lines.append(f"**综合结论：{buy_today}**")
     if pick_name:
         lines.append(f"**最适合买：{pick_name}（{pick_why}）**")
@@ -6552,18 +6552,18 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         "<nav class=toc>",
         "<a href='#s0'>0 能不能买</a>",
         "<a href='#s1'>1 隔夜</a>",
-        "<a href='#s4'>4 板块资金</a>",
-        "<a href='#s4b'>4b 集合竞价</a>",
-        "<a href='#s5'>5 个股一览</a>",
-        "<a href='#s6'>6 趋势复核</a>",
-        "<a href='#s7'>7 游资打分</a>",
-        "<a href='#s8'>8 左侧超跌</a>",
-        "<a href='#s9'>9 暗盘资金</a>",
-        "<a href='#s10'>10 重点跟踪</a>",
-        "<a href='#s11'>11 主线方向</a>",
-        "<a href='#s12'>12 个股对照</a>",
-        "<a href='#s13'>13 今日时点</a>",
-        "<a href='#s14'>14 买点明细</a>",
+        "<a href='#s2'>2 板块资金</a>",
+        "<a href='#s3'>3 集合竞价</a>",
+        "<a href='#s4'>4 个股一览</a>",
+        "<a href='#s5'>5 趋势复核</a>",
+        "<a href='#s6'>6 游资打分</a>",
+        "<a href='#s7'>7 左侧超跌</a>",
+        "<a href='#s8'>8 暗盘资金</a>",
+        "<a href='#s9'>9 重点跟踪</a>",
+        "<a href='#s10'>10 主线方向</a>",
+        "<a href='#s11'>11 个股对照</a>",
+        "<a href='#s12'>12 今日时点</a>",
+        "<a href='#s13'>13 买点明细</a>",
         "</nav><div class=page>",
     ]
     lines = md.replace("\r\n", "\n").split("\n")

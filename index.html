@@ -23,11 +23,12 @@
     .top { flex:0 0 auto; position:relative; z-index:5;
       padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;
       border-bottom:1px solid var(--line); background:#111110; }
-    .brand { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-    .head-right { flex:1 1 220px; min-width:0; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
-    .ovn-news { width:100%; max-width:640px; text-align:right; font-size:12px; line-height:1.5;
+    .brand { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+    .head-left { flex:0 0 auto; }
+    .head-right { flex:1 1 280px; min-width:0; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+    .ovn-news { width:100%; max-width:720px; text-align:right; font-size:12px; line-height:1.45;
       color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical;
-      -webkit-line-clamp:3; }
+      -webkit-line-clamp:2; }
     .ovn-news b { color:#c5c2b6; font-weight:650; margin-right:6px; }
     .eyebrow { font-size:12px; letter-spacing:.12em; color:var(--ice); margin:0 0 4px; font-weight:600; }
     .top h1 { margin:0; font-size:22px; font-weight:700; letter-spacing:0; color:#fff; line-height:1.4; }
@@ -35,35 +36,36 @@
       letter-spacing:.08em; line-height:1.5; font-variant-numeric:tabular-nums; }
     .toggle { background:#2a2a28; color:#fff; border:0;
       border-radius:10px; padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600;
-      min-height:40px; white-space:nowrap; }
+      min-height:44px; white-space:nowrap; }
     .toggle.alt { background:#f2f1ec; color:#111110; }
     .ok { color:var(--ok); } .bad { color:var(--bad); } .watchc { color:var(--watch); }
     .meta { color:var(--muted); font-size:13px; margin:4px 0 0; line-height:1.5; }
     .meta b { color:#fff; font-family:var(--mono); font-weight:500; letter-spacing:.04em; }
-    .toolbar { display:flex; gap:8px; align-items:center; margin:12px 0 8px; }
+    .toolbar { display:flex; gap:8px; align-items:center; margin:10px 0 0; }
     .toolbar input { flex:0 1 120px; min-width:96px; background:#111110; color:#fff;
       border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:16px;
       min-height:44px; }
     .toolbar input:focus { outline:none; border-color:var(--ice); }
     .toolbar .act { flex:0 0 auto; }
-    .idx-tape { display:flex; flex-wrap:wrap; gap:6px; align-items:stretch;
+    .idx-tape { display:flex; flex-wrap:wrap; gap:2px 12px; align-items:center;
       justify-content:flex-end; min-width:0; width:100%; }
     .idx-chip {
-      font-family:var(--mono); font-size:11px; line-height:1.25;
-      padding:6px 8px; border-radius:8px; background:#1c1c1a;
-      border:1px solid var(--line); color:#c5c2b6; white-space:nowrap;
-      font-variant-numeric:tabular-nums;
+      font-family:var(--mono); font-size:12px; line-height:1.3;
+      padding:0; border:0; background:transparent; border-radius:0;
+      color:#c5c2b6; white-space:nowrap; font-variant-numeric:tabular-nums;
+      flex:0 0 auto; align-self:center;
     }
-    .idx-chip .n { color:var(--muted); margin-right:5px; font-weight:600; letter-spacing:.04em; }
-    .idx-chip .p { color:#f2f1ec; margin-right:4px; }
-    .idx-chip.up { color:#d67a7a; border-color:rgba(214,122,122,.28); }
-    .idx-chip.dn { color:#6fba8d; border-color:rgba(111,186,141,.28); }
+    .idx-chip .n { color:var(--muted); margin-right:4px; font-weight:600; letter-spacing:.02em; }
+    .idx-chip .p { color:#f2f1ec; margin-right:3px; font-weight:500; }
+    .idx-chip.up { color:#d67a7a; }
+    .idx-chip.dn { color:#6fba8d; }
     .idx-chip.flat { color:#c5c2b6; }
     .cards { display:flex; flex-wrap:nowrap; gap:8px; margin:8px 0 4px; overflow-x:auto;
-      -webkit-overflow-scrolling:touch; padding-bottom:2px; scrollbar-width:thin; }
+      -webkit-overflow-scrolling:touch; padding-bottom:2px; scrollbar-width:thin;
+      align-items:flex-start; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
-      padding:10px 12px; min-width:136px; flex:0 0 auto; }
-    .card.wide { min-width:220px; }
+      padding:8px 10px; min-width:120px; flex:0 0 auto; }
+    .card.wide { min-width:200px; }
     .card .k { font-size:12px; color:var(--muted); }
     .card .v { font-size:14px; font-weight:650; margin-top:6px; line-height:1.45; overflow-wrap:anywhere; color:#fff; }
     .links { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; margin:6px 0 0; align-items:center; }
@@ -123,10 +125,10 @@
       .top { padding:18px 22px 14px; }
       .top h1 { font-size:28px; }
       .clock { font-size:16px; }
-      .cards { flex-wrap:wrap; }
-      .card { flex:1 1 140px; min-width:140px; }
+      .cards { flex-wrap:wrap; align-items:flex-start; }
+      .card { flex:1 1 130px; min-width:130px; }
       .toolbar input { max-width:168px; font-size:14px; }
-      .idx-chip { font-size:12px; padding:7px 9px; }
+      .idx-chip { font-size:12px; }
     }
     .mob-dock { display:none; }
     @media (max-width:859px) {
@@ -135,6 +137,7 @@
       .head-right { flex:1 1 100%; align-items:stretch; order:3; }
       .ovn-news { text-align:left; max-width:none; -webkit-line-clamp:2; }
       .brand { flex-wrap:wrap; }
+      .head-left { flex:1 1 auto; }
       .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 10px; }
       .top h1 { font-size:18px; line-height:1.4; }
       .clock { font-size:14px; }
@@ -146,10 +149,10 @@
       .toolbar { flex-wrap:wrap; margin:8px 0 6px; }
       .toolbar input { flex:1 1 96px; min-width:0; max-width:none; font-size:16px; }
       .idx-tape {
-        flex:1 1 100%; justify-content:flex-start; flex-wrap:nowrap;
-        overflow-x:auto; -webkit-overflow-scrolling:touch; margin-left:0;
+        justify-content:flex-start; flex-wrap:nowrap;
+        overflow-x:auto; -webkit-overflow-scrolling:touch;
       }
-      .idx-chip { font-size:11px; padding:5px 7px; }
+      .idx-chip { font-size:11px; }
       .bar {
         flex-direction:column;
         align-items:stretch;
@@ -170,22 +173,22 @@
   <div class="layout">
     <div class="top">
       <div class="brand">
-        <div>
+        <div class="head-left">
           <p class="eyebrow">今日自选 · 北京</p>
           <h1 id="title">今日自选</h1>
           <p class="clock" id="clock">—</p>
           <p class="meta" id="meta">正在加载…</p>
+          <div class="toolbar" id="toolbar">
+            <input id="scan-code" maxlength="16" placeholder="代码或名称" autocomplete="off">
+            <button class="act" id="btn-analyze" type="button">分析</button>
+            <button class="act warn" id="btn-runall" type="button">重跑</button>
+            <button class="toggle" id="toggle" type="button">管理自选</button>
+          </div>
         </div>
         <div class="head-right">
           <div class="ovn-news" id="ovn-news"></div>
           <div class="idx-tape" id="idx-tape" aria-label="本轮快照大盘"></div>
         </div>
-        <button class="toggle" id="toggle" type="button">管理自选</button>
-      </div>
-      <div class="toolbar" id="toolbar">
-        <input id="scan-code" maxlength="16" placeholder="代码或名称" autocomplete="off">
-        <button class="act" id="btn-analyze" type="button">分析</button>
-        <button class="act warn" id="btn-runall" type="button">重跑自选</button>
       </div>
       <div id="report-head">
         <div class="cards" id="cards"></div>
@@ -300,8 +303,12 @@
       panelReport.classList.toggle("on", !watch);
       reportHead.style.display = watch ? "none" : "block";
       document.body.classList.toggle("watch", watch);
-      const tb = document.getElementById("toolbar");
-      if (tb) tb.style.display = watch ? "none" : "flex";
+      ["scan-code", "btn-analyze", "btn-runall"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = watch ? "none" : "";
+      });
+      const hr = document.querySelector(".head-right");
+      if (hr) hr.style.display = watch ? "none" : "flex";
       title.textContent = watch ? "管理自选" : "今日自选";
       toggle.textContent = watch ? "返回报告" : "管理自选";
       toggle.classList.toggle("alt", watch);

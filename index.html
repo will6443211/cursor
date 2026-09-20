@@ -172,12 +172,21 @@
         width:100%;
         max-width:none;
       }
-      html, body, .layout { height:100%; height:100dvh; overflow:hidden; }
-      .layout { padding-bottom:0; }
+      html, body {
+        height:auto; min-height:100dvh; overflow:auto; overflow-x:hidden;
+        -webkit-overflow-scrolling:touch;
+      }
+      .layout { height:auto; min-height:100dvh; overflow:visible; padding-bottom:0; }
       iframe { display:none !important; height:0 !important; width:0 !important; pointer-events:none !important; }
-      .stage { z-index:0; }
+      .panel, .panel.on, #panel-report.on, #panel-watch.on {
+        overflow:visible; flex:none; height:auto; min-height:0;
+      }
+      #panel-report.on { display:block; }
+      .stage { z-index:0; display:block; height:auto; min-height:0; flex:none; }
       .toolbar button { min-width:44px; cursor:pointer; }
-      .report-flow { display:block; flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; }
+      .report-flow {
+        display:block; flex:none; min-height:0; height:auto; overflow:visible;
+      }
       .mob-dock { display:none !important; }
     }
   </style>
@@ -325,6 +334,7 @@
       title.textContent = watch ? "管理自选" : "今日自选";
       toggle.textContent = watch ? "返回报告" : "管理自选";
       toggle.classList.toggle("alt", watch);
+      if (isPhone()) window.scrollTo(0, 0);
       if (watch && !watchLoaded) {
         loadWatch().catch(() => say("加载自选失败", "err"));
         watchLoaded = true;
@@ -429,7 +439,8 @@
         if (nav) wrap.appendChild(document.importNode(nav, true));
         if (page) wrap.appendChild(document.importNode(page, true));
         root.appendChild(wrap);
-        reportFlow.scrollTop = 0;
+        if (isPhone()) window.scrollTo(0, 0);
+        else reportFlow.scrollTop = 0;
       } catch (e) {
         reportFlow.innerHTML = "<p class='meta'>报告加载失败，请点「新窗口」</p>";
       }

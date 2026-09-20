@@ -25,10 +25,9 @@
       border-bottom:1px solid var(--line); background:#111110; }
     .brand { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
     .head-left { flex:0 0 auto; }
-    .head-right { flex:1 1 280px; min-width:0; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
-    .ovn-news { width:100%; max-width:720px; text-align:right; font-size:12px; line-height:1.45;
-      color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical;
-      -webkit-line-clamp:2; }
+    .head-right { flex:1 1 320px; min-width:0; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+    .ovn-news { width:100%; text-align:right; font-size:12px; line-height:1.5;
+      color:var(--muted); overflow:visible; white-space:normal; }
     .ovn-news b { color:#c5c2b6; font-weight:650; margin-right:6px; }
     .eyebrow { font-size:12px; letter-spacing:.12em; color:var(--ice); margin:0 0 4px; font-weight:600; }
     .top h1 { margin:0; font-size:22px; font-weight:700; letter-spacing:0; color:#fff; line-height:1.4; }
@@ -41,14 +40,14 @@
     .ok { color:var(--ok); } .bad { color:var(--bad); } .watchc { color:var(--watch); }
     .meta { color:var(--muted); font-size:13px; margin:4px 0 0; line-height:1.5; }
     .meta b { color:#fff; font-family:var(--mono); font-weight:500; letter-spacing:.04em; }
-    .toolbar { display:flex; gap:8px; align-items:center; margin:10px 0 0; }
+    .toolbar { display:flex; gap:8px; align-items:center; margin:8px 0 0; flex-wrap:wrap; }
     .toolbar input { flex:0 1 120px; min-width:96px; background:#111110; color:#fff;
       border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:16px;
       min-height:44px; }
     .toolbar input:focus { outline:none; border-color:var(--ice); }
     .toolbar .act { flex:0 0 auto; }
     .idx-tape { display:flex; flex-wrap:wrap; gap:2px 12px; align-items:center;
-      justify-content:flex-end; min-width:0; width:100%; }
+      justify-content:flex-start; min-width:0; width:100%; margin:6px 0 2px; }
     .idx-chip {
       font-family:var(--mono); font-size:12px; line-height:1.3;
       padding:0; border:0; background:transparent; border-radius:0;
@@ -60,7 +59,7 @@
     .idx-chip.up { color:#d67a7a; }
     .idx-chip.dn { color:#6fba8d; }
     .idx-chip.flat { color:#c5c2b6; }
-    .cards { display:flex; flex-wrap:nowrap; gap:8px; margin:8px 0 4px; overflow-x:auto;
+    .cards { display:flex; flex-wrap:nowrap; gap:8px; margin:2px 0 4px; overflow-x:auto;
       -webkit-overflow-scrolling:touch; padding-bottom:2px; scrollbar-width:thin;
       align-items:flex-start; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
@@ -99,7 +98,11 @@
     input[name=code] { width:160px; }
     input[name=board] { width:140px; }
     button.act { background:#f2f1ec; color:#111110; border:0; border-radius:10px; padding:10px 14px;
-      font-size:14px; cursor:pointer; font-weight:650; min-height:44px; white-space:nowrap; }
+      font-size:14px; cursor:pointer; font-weight:650; min-height:44px; white-space:nowrap;
+      touch-action:manipulation; -webkit-tap-highlight-color:rgba(242,241,236,.2);
+      position:relative; z-index:6; }
+    .toggle { touch-action:manipulation; -webkit-tap-highlight-color:rgba(242,241,236,.2);
+      position:relative; z-index:6; }
     button.act.warn { background:transparent; color:#f2f1ec; border:1px solid rgba(242,241,236,.35); }
     button.danger { background:transparent; color:var(--bad); border:1px solid rgba(239,107,123,.4); border-radius:10px;
       padding:8px 10px; font-size:13px; cursor:pointer; min-height:36px; }
@@ -135,10 +138,10 @@
       .drawer { width:100vw; border-left:0; z-index:2147483600; }
       .eyebrow { display:none; }
       .head-right { flex:1 1 100%; align-items:stretch; order:3; }
-      .ovn-news { text-align:left; max-width:none; -webkit-line-clamp:2; }
+      .ovn-news { text-align:left; max-width:none; }
       .brand { flex-wrap:wrap; }
       .head-left { flex:1 1 auto; }
-      .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 10px; }
+      .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 10px; z-index:2147483000; }
       .top h1 { font-size:18px; line-height:1.4; }
       .clock { font-size:14px; }
       .meta { font-size:12px; }
@@ -163,7 +166,9 @@
       }
       html, body, .layout { height:100%; height:100dvh; overflow:hidden; }
       .layout { padding-bottom:0; }
-      iframe { display:none !important; height:0 !important; width:0 !important; }
+      iframe { display:none !important; height:0 !important; width:0 !important; pointer-events:none !important; }
+      .stage { z-index:0; }
+      .toolbar button { min-width:44px; cursor:pointer; }
       .report-flow { display:block; flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; }
       .mob-dock { display:none !important; }
     }
@@ -187,10 +192,10 @@
         </div>
         <div class="head-right">
           <div class="ovn-news" id="ovn-news"></div>
-          <div class="idx-tape" id="idx-tape" aria-label="本轮快照大盘"></div>
         </div>
       </div>
       <div id="report-head">
+        <div class="idx-tape" id="idx-tape" aria-label="本轮快照大盘"></div>
         <div class="cards" id="cards"></div>
         <div class="links">
           <a href="/reports/latest.html" target="_blank">新窗口</a>
@@ -456,7 +461,7 @@
         : ((d.avoid || []).join("、") || "无（自选对口未净出）");
       const desk = d.ovn_desk || {};
       const hx = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
-      const boards = (desk.boards || []).join("、") || "暂无映射";
+      const boards = (desk.boards || []).map(x => String(x).replace(/[（(][^）)]*[）)]/g, "")).filter(Boolean).join("、") || "暂无映射";
       const names = (desk.names || []).join("、") || "先看板块";
       const newsEl = document.getElementById("ovn-news");
       if (newsEl) {

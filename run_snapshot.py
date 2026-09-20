@@ -328,6 +328,20 @@ def cn_session_closed(now=None):
     return hm < "09:30" or hm >= "15:00"
 
 
+def cn_session_live(now=None):
+    """A股连续竞价（含集合竞价尾声）。开盘必须用实时资金，不用 delay、不用隔日缓存。"""
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    if now.weekday() >= 5:
+        return False
+    hm = now.strftime("%H:%M")
+    return "09:15" <= hm < "15:05"
+
+
+def em_live_hosts(path):
+    """东财实时域。delay 是上一笔结算快照，开盘后没有新信息。"""
+    return (f"https://push2.eastmoney.com{path}",)
+
+
 def youzi_late(now=None):
     """游资/打板不新开：周末、盘前、14:30后、收盘后。"""
     now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
@@ -1226,7 +1240,7 @@ def em_secid(s):
 FLOW_CACHE = os.path.join(ROOT, "reports", "flow_cache.json")
 
 
-def _flow_cache_load(max_hours=18):
+def _flow_cache_load(max_hours=18, same_session=False):
     try:
         blob = json.load(open(FLOW_CACHE, encoding="utf-8"))
         ts = blob.get("_saved") or ""
@@ -1235,6 +1249,8 @@ def _flow_cache_load(max_hours=18):
         if saved.tzinfo is None:
             saved = saved.replace(tzinfo=now.tzinfo)
         if (now - saved).total_seconds() > max_hours * 3600:
+            return None
+        if same_session and blob.get("date") != session_date(now):
             return None
         blob["_from_cache"] = True
         return blob
@@ -1268,14 +1284,11 @@ def _flow_cache_save(inn=None, outf=None, stocks=None):
 
 def stock_flow(stocks):
     """主力/超大单净流入代理。东财暗盘不是真成交，这是可复现口径。
-    实时 push2 优先，delay 兜底；仍缺的个股用上一份有效缓存补，不当成「没资金」。"""
+    只用实时 push2。开盘不用 delay（没有新成交），也不用隔日缓存。"""
     out = {}
     ids = [em_secid(s) for s in stocks]
     fields = "f12,f14,f62,f184,f66,f69,f164,f165"
-    hosts = (
-        "https://push2.eastmoney.com/api/qt/ulist.np/get",
-        "https://push2delay.eastmoney.com/api/qt/ulist.np/get",
-    )
+    hosts = em_live_hosts("/api/qt/ulist.np/get")
 
     def eat(diff):
         for x in diff or []:
@@ -1304,8 +1317,8 @@ def stock_flow(stocks):
         if len(out) >= max(1, int(len(ids) * 0.5)):
             break
     miss = [s["code"] for s in stocks if s.get("code") not in out]
-    if miss:
-        cached = (_flow_cache_load() or {}).get("stocks") or {}
+    if miss and not cn_session_live():
+        cached = (_flow_cache_load(same_session=True) or {}).get("stocks") or {}
         for code in miss:
             if stock_flow_ok(cached.get(code)):
                 row = dict(cached[code])
@@ -1559,16 +1572,13 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
 
 
 def sector_flow():
-    """东财行业主力。实时→延时→上一份缓存。缺了先补数，再才降门槛。"""
+    """东财行业主力。只用实时接口。开盘不用 delay、不用周五缓存冒充周一。"""
     ut = "fa5fd1943c7b386f172d6893dbfba10b"
     base = (
         "pn=1&pz=12&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2"
         f"&fields=f14,f3,f62,f184,f204&ut={ut}"
     )
-    hosts = (
-        "https://push2.eastmoney.com/api/qt/clist/get",
-        "https://push2delay.eastmoney.com/api/qt/clist/get",
-    )
+    hosts = em_live_hosts("/api/qt/clist/get")
     inn, out = [], []
     for host in hosts:
         try:
@@ -1590,8 +1600,8 @@ def sector_flow():
         except Exception:
             _note_fail("板块资金")
             continue
-    if not inn and not out:
-        cached = _flow_cache_load() or {}
+    if not inn and not out and not cn_session_live():
+        cached = _flow_cache_load(same_session=True) or {}
         inn = list(cached.get("inn") or [])
         out = list(cached.get("out") or [])
         if inn or out:
@@ -2845,9 +2855,12 @@ def market_mood(zt_rows=None, env=None):
         fs = "m:0+t:6+f:!2,m:0+t:80+f:!2,m:1+t:2+f:!2,m:1+t:23+f:!2"
         fields = "f12,f14,f3,f100,f8"
         urls = [
-            f"https://push2delay.eastmoney.com/api/qt/clist/get?pn={pn}&pz={pz}&po={po}&np=1&fltt=2&invt=2&fid=f3&fs={fs}&fields={fields}",
             f"https://push2.eastmoney.com/api/qt/clist/get?pn={pn}&pz={pz}&po={po}&np=1&fltt=2&invt=2&fid=f3&fs={fs}&fields={fields}",
         ]
+        if not cn_session_live():
+            urls.append(
+                f"https://push2delay.eastmoney.com/api/qt/clist/get?pn={pn}&pz={pz}&po={po}&np=1&fltt=2&invt=2&fid=f3&fs={fs}&fields={fields}"
+            )
         for url in urls:
             try:
                 d = http(url, timeout=8)

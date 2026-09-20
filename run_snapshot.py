@@ -1652,8 +1652,9 @@ def _news_title(it):
 
 def _news_key(t):
     s = re.sub(r"^(财联社|每日经济新闻|证券时报|证券日报|上海证券报|中国证券报|第一财经)\d*月?\d*日?电?，?", "", t or "")
+    s = re.sub(r"(今日|昨日|将|据报道|据悉|最新)", "", s)
     s = re.sub(r"[^\w\u4e00-\u9fff]+", "", s)
-    return s[:20]
+    return s[:16]
 
 
 def _news_uniq(xs):

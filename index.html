@@ -25,10 +25,15 @@
       border-bottom:1px solid var(--line); background:#111110; }
     .brand { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
     .head-left { flex:0 0 auto; }
-    .head-right { flex:1 1 320px; min-width:0; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
-    .ovn-news { width:100%; text-align:right; font-size:12px; line-height:1.5;
-      color:var(--muted); overflow:visible; white-space:normal; }
-    .ovn-news b { color:#c5c2b6; font-weight:650; margin-right:6px; }
+    .head-right { flex:1 1 320px; min-width:0; display:flex; justify-content:flex-end; align-items:flex-start; }
+    .ovn-news { width:min(560px, 100%); max-width:100%; text-align:left; font-size:11px; line-height:1.35;
+      color:var(--muted); }
+    .ovn-news b { display:block; color:#c5c2b6; font-weight:650; margin:0 0 4px; letter-spacing:.06em; font-size:11px; }
+    .ovn-news ul { margin:0; padding:0; list-style:none;
+      display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:2px 16px; }
+    .ovn-news li { padding:1px 0 1px 10px; position:relative; overflow-wrap:anywhere; }
+    .ovn-news li::before { content:""; position:absolute; left:0; top:.55em; width:4px; height:4px;
+      border-radius:50%; background:#6a6860; }
     .eyebrow { font-size:12px; letter-spacing:.12em; color:var(--ice); margin:0 0 4px; font-weight:600; }
     .top h1 { margin:0; font-size:22px; font-weight:700; letter-spacing:0; color:#fff; line-height:1.4; }
     .clock { margin:6px 0 0; font-family:var(--mono); font-size:15px; font-weight:500; color:#c5c2b6;
@@ -138,8 +143,9 @@
     @media (max-width:859px) {
       .drawer { width:100vw; border-left:0; z-index:2147483600; }
       .eyebrow { display:none; }
-      .head-right { flex:1 1 100%; align-items:stretch; order:3; }
-      .ovn-news { text-align:left; max-width:none; }
+      .head-right { flex:1 1 100%; justify-content:flex-start; order:3; }
+      .ovn-news { max-width:none; width:100%; }
+      .ovn-news ul { grid-template-columns:1fr; }
       .brand { flex-wrap:wrap; }
       .head-left { flex:1 1 auto; }
       .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 10px; z-index:2147483000; }
@@ -467,10 +473,13 @@
       const names = (desk.names || []).join("、") || "先看板块";
       const newsEl = document.getElementById("ovn-news");
       if (newsEl) {
-        newsEl.innerHTML = desk.news
-          ? `<b>隔夜消息</b>${hx(desk.news)}`
-          : `<b>隔夜消息</b>快讯暂缺`;
-        newsEl.title = desk.news || "快讯暂缺";
+        const bits = String(desk.news || "").split(/[；;]/).map(s => s.trim()).filter(Boolean);
+        if (!bits.length) {
+          newsEl.innerHTML = "<b>隔夜消息</b><ul><li>快讯暂缺</li></ul>";
+        } else {
+          newsEl.innerHTML = "<b>隔夜消息</b><ul>" + bits.map(x => `<li>${hx(x)}</li>`).join("") + "</ul>";
+        }
+        newsEl.title = bits.join("；") || "快讯暂缺";
       }
       const cards = [
         ["能不能买", (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],

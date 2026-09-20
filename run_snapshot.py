@@ -329,7 +329,7 @@ def cn_session_closed(now=None):
 
 
 def cn_session_live(now=None):
-    """A股连续竞价（含集合竞价尾声）。开盘必须用实时资金，不用 delay、不用隔日缓存。"""
+    """A股连续竞价（含集合竞价尾声）。报价/涨停统计从 09:15 起用实时。"""
     now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     if now.weekday() >= 5:
         return False
@@ -337,9 +337,21 @@ def cn_session_live(now=None):
     return "09:15" <= hm < "15:05"
 
 
-def em_live_hosts(path):
-    """东财实时域。delay 是上一笔结算快照，开盘后没有新信息。"""
-    return (f"https://push2.eastmoney.com{path}",)
+def cn_flow_live(now=None):
+    """主力净流入从 9:30 连续成交才有新信息。竞价/休市仍用昨收，不是盘中 delay。"""
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    if now.weekday() >= 5:
+        return False
+    hm = now.strftime("%H:%M")
+    return "09:30" <= hm < "15:05"
+
+
+def em_flow_hosts(path, now=None):
+    """资金接口。开盘只用 push2；休市 live 常关，delay 就是昨收最新。"""
+    live = f"https://push2.eastmoney.com{path}"
+    if cn_flow_live(now):
+        return (live,)
+    return (live, f"https://push2delay.eastmoney.com{path}")
 
 
 def youzi_late(now=None):
@@ -1284,11 +1296,12 @@ def _flow_cache_save(inn=None, outf=None, stocks=None):
 
 def stock_flow(stocks):
     """主力/超大单净流入代理。东财暗盘不是真成交，这是可复现口径。
-    只用实时 push2。开盘不用 delay（没有新成交），也不用隔日缓存。"""
+    开盘只用实时；休市先爬 live，连不上再用 delay（昨收），最后才同交易日缓存。
+    盘中 delay 是滞后快照，不用。隔日缓存不开盘后冒充当天。"""
     out = {}
     ids = [em_secid(s) for s in stocks]
     fields = "f12,f14,f62,f184,f66,f69,f164,f165"
-    hosts = em_live_hosts("/api/qt/ulist.np/get")
+    hosts = em_flow_hosts("/api/qt/ulist.np/get")
 
     def eat(diff):
         for x in diff or []:
@@ -1311,19 +1324,21 @@ def stock_flow(stocks):
             try:
                 d = http(url, timeout=10)
             except Exception:
-                _note_fail("个股资金")
                 continue
             eat((d.get("data") or {}).get("diff") or [])
         if len(out) >= max(1, int(len(ids) * 0.5)):
             break
     miss = [s["code"] for s in stocks if s.get("code") not in out]
-    if miss and not cn_session_live():
+    if miss and not cn_flow_live():
         cached = (_flow_cache_load(same_session=True) or {}).get("stocks") or {}
         for code in miss:
             if stock_flow_ok(cached.get(code)):
                 row = dict(cached[code])
                 row["_from_cache"] = True
                 out[code] = row
+        miss = [s["code"] for s in stocks if s.get("code") not in out]
+    if stocks and len(out) < max(1, int(len(ids) * 0.5)):
+        _note_fail("个股资金")
     if out:
         _flow_cache_save(stocks=out)
     return out
@@ -1572,13 +1587,14 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
 
 
 def sector_flow():
-    """东财行业主力。只用实时接口。开盘不用 delay、不用周五缓存冒充周一。"""
+    """东财行业主力。开盘只用实时；休市 live 连不上就爬 delay（昨收最新）。
+    盘中不用 delay。周五缓存周一开盘后不用。"""
     ut = "fa5fd1943c7b386f172d6893dbfba10b"
     base = (
         "pn=1&pz=12&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2"
         f"&fields=f14,f3,f62,f184,f204&ut={ut}"
     )
-    hosts = em_live_hosts("/api/qt/clist/get")
+    hosts = em_flow_hosts("/api/qt/clist/get")
     inn, out = [], []
     for host in hosts:
         try:
@@ -1588,7 +1604,6 @@ def sector_flow():
             if inn:
                 break
         except Exception:
-            _note_fail("板块资金")
             continue
     for host in hosts:
         try:
@@ -1598,14 +1613,15 @@ def sector_flow():
             if out:
                 break
         except Exception:
-            _note_fail("板块资金")
             continue
-    if not inn and not out and not cn_session_live():
+    if not inn and not out and not cn_flow_live():
         cached = _flow_cache_load(same_session=True) or {}
         inn = list(cached.get("inn") or [])
         out = list(cached.get("out") or [])
         if inn or out:
             _note_fail("板块资金用缓存")
+    if not inn and not out:
+        _note_fail("板块资金")
     if inn or out:
         _flow_cache_save(inn=inn, outf=out)
     return inn, out
@@ -6163,7 +6179,12 @@ def main():
     lines.append("- 用法：早上8点先看本节定关注名单；9:30后用第0节买点+竞价+资金主线确认，隔夜推荐不能单独开仓。")
     lines.append("")
     lines.append("## 2 板块资金")
-    lines.append("口径：东财行业主力净流入（估算）。流入/流出只定主线热度，不单独开仓。")
+    flow_src = "盘中实时" if cn_flow_live() else "休市/竞价=昨收最新（live 优先，连不上再用 delay）"
+    lines.append(
+        f"口径：东财行业主力净流入（估算）。{flow_src}。"
+        "流入/流出只定主线热度，不单独开仓。"
+        "板块热度与主线可做/回避是同一笔当日主力，不是两道条件；全市场涨停情绪另算。"
+    )
     lines.append("### 板块资金流入")
     lines.append("| 序 | 板块 | 涨跌 | 主力净流入 | 领涨 |")
     lines.append("|---|---|---|---|---|")

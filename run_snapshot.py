@@ -1223,22 +1223,62 @@ def em_secid(s):
     return f"{0 if s['market'] == 'sz' else 1}.{s['code']}"
 
 
+FLOW_CACHE = os.path.join(ROOT, "reports", "flow_cache.json")
+
+
+def _flow_cache_load(max_hours=18):
+    try:
+        blob = json.load(open(FLOW_CACHE, encoding="utf-8"))
+        ts = blob.get("_saved") or ""
+        saved = datetime.datetime.fromisoformat(ts)
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+        if saved.tzinfo is None:
+            saved = saved.replace(tzinfo=now.tzinfo)
+        if (now - saved).total_seconds() > max_hours * 3600:
+            return None
+        blob["_from_cache"] = True
+        return blob
+    except Exception:
+        return None
+
+
+def _flow_cache_save(inn=None, outf=None, stocks=None):
+    try:
+        os.makedirs(os.path.dirname(FLOW_CACHE), exist_ok=True)
+        prev = {}
+        try:
+            prev = json.load(open(FLOW_CACHE, encoding="utf-8"))
+        except Exception:
+            prev = {}
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+        blob = {
+            "inn": inn if inn else (prev.get("inn") or []),
+            "out": outf if outf else (prev.get("out") or []),
+            "stocks": dict(prev.get("stocks") or {}),
+            "_saved": now.isoformat(),
+            "date": session_date(now),
+        }
+        if stocks:
+            blob["stocks"].update(stocks)
+        if blob["inn"] or blob["out"] or blob["stocks"]:
+            json.dump(blob, open(FLOW_CACHE, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:
+        pass
+
+
 def stock_flow(stocks):
-    """主力/超大单净流入代理。东财暗盘不是真成交，这是可复现口径。"""
+    """主力/超大单净流入代理。东财暗盘不是真成交，这是可复现口径。
+    实时 push2 优先，delay 兜底；仍缺的个股用上一份有效缓存补，不当成「没资金」。"""
     out = {}
     ids = [em_secid(s) for s in stocks]
     fields = "f12,f14,f62,f184,f66,f69,f164,f165"
-    for i in range(0, len(ids), 18):
-        chunk = ",".join(ids[i:i + 18])
-        url = (
-            "https://push2delay.eastmoney.com/api/qt/ulist.np/get?fltt=2&np=1&fields="
-            + fields + "&secids=" + chunk
-        )
-        try:
-            d = http(url, timeout=10)
-        except Exception:
-            continue
-        for x in ((d.get("data") or {}).get("diff") or []):
+    hosts = (
+        "https://push2.eastmoney.com/api/qt/ulist.np/get",
+        "https://push2delay.eastmoney.com/api/qt/ulist.np/get",
+    )
+
+    def eat(diff):
+        for x in diff or []:
             try:
                 code = str(x["f12"]).zfill(6)
                 out[code] = {
@@ -1250,6 +1290,29 @@ def stock_flow(stocks):
                 }
             except Exception:
                 continue
+
+    for host in hosts:
+        for i in range(0, len(ids), 18):
+            chunk = ",".join(ids[i:i + 18])
+            url = f"{host}?fltt=2&np=1&fields={fields}&secids={chunk}"
+            try:
+                d = http(url, timeout=10)
+            except Exception:
+                _note_fail("个股资金")
+                continue
+            eat((d.get("data") or {}).get("diff") or [])
+        if len(out) >= max(1, int(len(ids) * 0.5)):
+            break
+    miss = [s["code"] for s in stocks if s.get("code") not in out]
+    if miss:
+        cached = (_flow_cache_load() or {}).get("stocks") or {}
+        for code in miss:
+            if stock_flow_ok(cached.get(code)):
+                row = dict(cached[code])
+                row["_from_cache"] = True
+                out[code] = row
+    if out:
+        _flow_cache_save(stocks=out)
     return out
 
 
@@ -1496,33 +1559,45 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
 
 
 def sector_flow():
-    urls = [
-        "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=8&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f14,f3,f62,f184,f204&ut=fa5fd1943c7b386f172d6893dbfba10b",
-        "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=8&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f14,f3,f62,f184,f204&ut=fa5fd1943c7b386f172d6893dbfba10b",
-    ]
-    urls_out = [
-        "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=6&po=0&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f14,f3,f62,f184&ut=fa5fd1943c7b386f172d6893dbfba10b",
-        "https://push2delay.eastmoney.com/api/qt/clist/get?pn=1&pz=6&po=0&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f14,f3,f62,f184&ut=fa5fd1943c7b386f172d6893dbfba10b",
-    ]
+    """东财行业主力。实时→延时→上一份缓存。缺了先补数，再才降门槛。"""
+    ut = "fa5fd1943c7b386f172d6893dbfba10b"
+    base = (
+        "pn=1&pz=12&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2"
+        f"&fields=f14,f3,f62,f184,f204&ut={ut}"
+    )
+    hosts = (
+        "https://push2.eastmoney.com/api/qt/clist/get",
+        "https://push2delay.eastmoney.com/api/qt/clist/get",
+    )
     inn, out = [], []
-    for url in urls:
+    for host in hosts:
         try:
-            d = http(url, timeout=8)
+            d = http(f"{host}?{base}&po=1", timeout=8)
             for x in (d.get("data") or {}).get("diff") or []:
                 inn.append(f"{x['f14']} {x['f3']:+}% 主力{float(x['f62'])/1e8:+.1f}亿 领{x.get('f204')}")
             if inn:
                 break
         except Exception:
+            _note_fail("板块资金")
             continue
-    for url in urls_out:
+    for host in hosts:
         try:
-            d2 = http(url, timeout=8)
+            d2 = http(f"{host}?{base}&po=0", timeout=8)
             for x in (d2.get("data") or {}).get("diff") or []:
                 out.append(f"{x['f14']} {x['f3']:+}% 主力{float(x['f62'])/1e8:+.1f}亿")
             if out:
                 break
         except Exception:
+            _note_fail("板块资金")
             continue
+    if not inn and not out:
+        cached = _flow_cache_load() or {}
+        inn = list(cached.get("inn") or [])
+        out = list(cached.get("out") or [])
+        if inn or out:
+            _note_fail("板块资金用缓存")
+    if inn or out:
+        _flow_cache_save(inn=inn, outf=out)
     return inn, out
 
 

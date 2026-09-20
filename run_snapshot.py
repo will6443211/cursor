@@ -6281,7 +6281,15 @@ def main():
         "pick_why": pick_why or "",
         "doable": doable,
         "avoid": desk_avoid[:10],
-        "avoid_note": "热门涨幅≠主力在进。回避只看该线净出，不把光通信/半导体和PCB绑在一起。",
+        "avoid_detail": [
+            {
+                "line": x,
+                "amt": (heat_map.get(x) or {}).get("amt"),
+                "chg": (heat_map.get(x) or {}).get("chg"),
+            }
+            for x in desk_avoid[:10]
+        ],
+        "avoid_note": "回避只看该线东财主力净流出，不看涨幅热不热；涨得好也可以回避。不把光通信/半导体和PCB绑在一起。",
         "can_small": can_small,
         "watch": watch,
         "small_on_line": small_on_line,

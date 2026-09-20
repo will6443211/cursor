@@ -426,16 +426,22 @@
       document.getElementById("meta").textContent = "先看第0节「能不能买」 · 大盘是本轮快照当时价";
       paintIdxTape(d);
       const top5 = (d.top5 || []).map(x => x.name).join("、") || "—";
-      const alt = (d.alt_pool || []).map(x => x.name).join("、") || "—";
       const pick = d.pick_name || "没有";
+      const avoidBits = (d.avoid_detail || []).length
+        ? (d.avoid_detail || []).map(x => {
+            const amt = (x.amt == null) ? "" : ((x.amt>=0?"+":"") + Number(x.amt).toFixed(0) + "亿");
+            const chg = (x.chg == null) ? "" : ("涨" + (x.chg>=0?"+":"") + Number(x.chg).toFixed(2) + "%");
+            const extra = [amt, chg].filter(Boolean).join("，");
+            return extra ? (x.line + " " + extra) : x.line;
+          }).join("、")
+        : ((d.avoid || []).join("、") || "无（自选对口未净出）");
       const cards = [
         ["能不能买", (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不")],
         ["总闸", d.buy_today || "—", cls(d.buy_today)],
         ["首选", pick, ""],
         ["最值得买", top5, ""],
-        ["备选池", alt, "watchc"],
         ["可做主线", (d.doable || []).join("、") || "—", "ok"],
-        ["回避主线", (d.avoid || []).join("、") || "无（自选对口未净出）", "bad"],
+        ["回避主线", avoidBits, "bad"],
       ];
       if (d.avoid_note) {
         cards.push(["回避口径", d.avoid_note, "watchc"]);

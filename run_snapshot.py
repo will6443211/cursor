@@ -1659,8 +1659,9 @@ def _news_key(t):
 
 def _news_uniq(xs):
     out, seen = [], set()
+    skip = re.compile(r"人气板块及个股点评|^\d+月\d+日涨停分析$|^涨停分析$")
     for t in xs:
-        if not t:
+        if not t or skip.search(t):
             continue
         k = _news_key(t)
         if t in seen or (k and k in seen):

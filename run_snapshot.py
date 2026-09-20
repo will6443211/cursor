@@ -4590,9 +4590,215 @@ def _yi(x):
     return f"{v / 1e8:+.2f}亿"
 
 
+def _gate_check_rows(s, q, fac, yz, st, line, kind, call, why, auc, db, mood, late,
+                     flow, heat_map, yld, is_etf):
+    """单股分析用：把实际过闸顺序摊成 过/挡/未触发，并标出卡在哪条。"""
+    q, fac, yz, auc, db = q or {}, fac or {}, yz or {}, auc or {}, db or {}
+    rows, flips = [], []
+    code = (s or {}).get("code") or ""
+    name = q.get("name")
+    chg = q.get("chg")
+    px, o, prev, vwap = q.get("px"), q.get("open"), q.get("prev"), q.get("vwap")
+    lim = board_limit_pct(code, name)
+    oh = overheat(code, chg, name)
+    dt = yday_dt_shape(q, yld)
+    dump = limit_open_dump(s, q)
+    phase = (mood or {}).get("phase") or "不明"
+    h = (heat_map or {}).get(line) or {}
+    amt, schg = h.get("amt"), h.get("chg")
+    gap = ((o / prev - 1) * 100) if o and prev else None
+    vr_n = vr_norm(q.get("vol_ratio") or 0)
+    hs_raw = q.get("turnover")
+    hs_n = hs_proj(hs_raw)
+    blocked = call not in ("可小仓", "可试仓")
+
+    def row(stt, title, detail, flip=None):
+        rows.append((stt, title, detail))
+        if stt == "挡" and flip:
+            flips.append(flip)
+
+    if dt == "trap":
+        row("挡", "昨跌停骗炮",
+            f"昨跌停，今开幅{gap:+.2f}%，现价弱于开盘/均价，按冲高回落或低开假转处理，硬不买。",
+            "次日要低开翻红、站住均价、量比≥1.0，才从骗炮改成弱转强")
+    elif dt == "turn":
+        row("过", "昨跌停骗炮", "昨跌停但是低开翻红站住均价，算弱转强，不一票否决，仓更小。")
+    elif dt == "weak":
+        row("过", "昨跌停骗炮", "昨跌停次日偏弱，未构成骗炮形态，不否决，只降权。")
+    else:
+        row("过", "昨跌停骗炮", "昨未跌停，这条没触发。")
+
+    hot_cut = lim * 0.70
+    if oh in ("涨停", "见顶"):
+        row("挡", "今涨停不追",
+            f"今{chg:+.2f}% / 本板{lim:.0f}%，档位「{oh}」（≥0.92板或已封死）。今板不追。",
+            "等回抽或次日竞价，不在今天封板上加仓")
+    elif oh == "不追" and kind in ("游资", "打板", "ETF"):
+        row("挡", "今涨过热",
+            f"今{chg:+.2f}%，已到0.70板（约{hot_cut:.1f}%），游资/打板改观察等回踩，不是硬涨停。",
+            f"回落到0.70板以下（约<{hot_cut:.1f}%）再谈")
+    else:
+        extra = f"偏热（≥0.50板），趋势不追尖" if oh == "偏热" else "正常"
+        row("过", "今涨停不追", f"今{chg:+.2f}%，未到0.70板（约{hot_cut:.1f}%），档位{extra}。")
+
+    if dump:
+        row("挡", "竞价涨停开后砸盘",
+            f"开幅{gap:+.2f}%接近涨停，开后现价{px}低于开盘{o}，按拉高出货，不做。",
+            "要开后站稳开盘价才不算砸盘")
+    elif gap is not None and gap >= lim * 0.9:
+        row("过", "竞价涨停开后砸盘", f"开幅{gap:+.2f}%接近涨停，但开后还站在开盘上，未触发砸盘。")
+    else:
+        row("过", "竞价涨停开后砸盘", f"开幅{_n(gap, 2, '%')}，不是近板开，这条没触发。")
+
+    if st == "回避":
+        money = f"主力{amt:+.1f}亿" if amt else "主力净出"
+        px_txt = f"，板块涨跌{schg:+.2f}%" if schg is not None else ""
+        row("挡", "主线回避",
+            f"板块「{(s or {}).get('board') or '-'}」归到主线「{line}」，当日{money}{px_txt}。"
+            "闸认这条线自己的钱在出，不认跌幅，也不连坐光通信/半导体。",
+            "本线主力转净流入后，结构闸还要同时过")
+    elif st == "可做":
+        money = f"主力{amt:+.1f}亿" if amt else "主力净进"
+        row("过", "主线回避", f"主线「{line}」可做（{money}）。热门涨幅不等于主力在进，这里已经是资金确认。")
+    else:
+        row("过", "主线回避", f"主线「{line}」中性，未进回避名单，不否决。")
+
+    if phase == "退潮" and kind == "打板":
+        row("挡", "全市场情绪", "涨停生态是退潮，打板空仓，不新开。", "情绪走出退潮后再谈打板")
+    elif phase == "退潮" and kind == "游资":
+        row("参考", "全市场情绪", "退潮：游资门槛从65抬到75，且只做低位、不追热，不是一刀切关死。")
+    elif phase == "退潮" and kind == "趋势" and oh in ("偏热", "不追"):
+        row("挡", "全市场情绪", "退潮且这只已经偏热，趋势也不追热。", "等回踩或情绪修复")
+    else:
+        row("过", "全市场情绪", f"当前「{phase}」。这是涨停家数/赚钱效应，不是板块资金。")
+
+    if kind in ("游资", "打板", "ETF") and late:
+        row("挡", "尾盘/休市不新开",
+            "周末、盘前或14:30后，游资和打板默认不新开。",
+            "下一个交易日09:30–14:30再过闸")
+    elif late:
+        row("参考", "尾盘/休市不新开", "趋势仓不受14:30空仓限制，但资金口径是昨收，开盘后还要再确认。")
+    else:
+        row("过", "尾盘/休市不新开", "仍在盘中窗口，可以按闸排队。")
+
+    if kind == "趋势":
+        cap = trend_chg_cap(code, fac.get("atr_pct"))
+        ma20 = fac.get("ma20")
+        above = bool(ma20) and px and px > ma20
+        below = vwap is not None and px and px < vwap
+        reclaim, held = bool(fac.get("vwap_reclaim")), fac.get("vwap_held", True)
+        if below and (chg or 0) < 0:
+            row("挡", "分时均价", f"现价{_n(px)}在均价{_n(vwap)}下，且收绿，趋势不买。", "翻红并站回均价")
+        elif below:
+            row("挡", "分时均价", f"现价相对均价{((px / vwap - 1) * 100):+.2f}%，还没收回。", "站回均价且不破当日关键低")
+        elif reclaim and not held:
+            row("挡", "分时均价", "破均价后收回，但已经跌破当日关键低，趋势不能小仓。", "守住当日关键低再收回")
+        elif reclaim:
+            row("过", "分时均价", "先破均价再收回，且守住当日关键低，算有效站回。")
+        else:
+            vs = ((px / vwap - 1) * 100) if px and vwap else None
+            row("过", "分时均价", f"现价在均价上" + (f"（{vs:+.2f}%）" if vs is not None else "") + "。")
+        if not above:
+            row("挡", "MA20",
+                f"现价{_n(px)}未上MA20 {_n(ma20)}，均线偏弱。",
+                "站上MA20并同时站上均价")
+        else:
+            vs20 = ((px / ma20 - 1) * 100) if px and ma20 else None
+            row("过", "MA20", f"现价在MA20上" + (f"（{vs20:+.1f}%）" if vs20 is not None else "") + "。")
+        if fac.get("rsi") is not None and fac["rsi"] >= 70:
+            row("挡", "RSI过热", f"RSI {fac['rsi']:.1f}≥70，等回踩。", "RSI回到70以下")
+        elif fac.get("rsi") is not None:
+            row("过", "RSI过热", f"RSI {fac['rsi']:.1f}，未到70。")
+        if chg is not None and chg >= cap:
+            row("挡", "趋势今涨上限",
+                f"今{chg:+.2f}%，上限约{cap:.1f}%（ATR/0.35板），过了只观察不追。",
+                f"回落到{cap:.1f}%以内")
+        else:
+            row("过", "趋势今涨上限", f"今{_n(chg, 2, '%')}，上限约{cap:.1f}%。")
+        if fac.get("vp") == "价涨资金出":
+            row("挡", "价涨资金出", "价在涨、主力在出，趋势不能小仓。", "个股主力转净流入")
+        else:
+            row("过", "价涨资金出", f"量价标注「{fac.get('vp') or '-'}」，不是价涨资金出。")
+        if vr_n < 0.8 and ((chg or 0) < 0 or (px and o and px < o)):
+            row("挡", "量比", f"归一量比{vr_n:.2f}且收阴，无量不能小仓。", "量比回到1.0以上")
+        elif vr_n < 1.0:
+            row("挡", "量比", f"归一量比{vr_n:.2f}，趋势要≥1.0才算有量站上均价。", "量比≥1.0")
+        else:
+            row("过", "量比", f"归一量比{vr_n:.2f}（原始{ _n(q.get('vol_ratio'), 2) }），过1.0。")
+
+    if kind == "游资":
+        need = youzi_enter_need(yz, mood)
+        sc7 = yz.get("score") or 0
+        miss = "；资金缺，门槛从65抬到72" if yz.get("flow_miss") else ""
+        if sc7 < need:
+            row("挡", "7a门槛",
+                f"7a {sc7:.0f}，本闸门槛{need:.0f}{miss}。分数不够不能因为板块热就放行。",
+                f"7a到{need:.0f}（刚过线还要再确认一次）")
+        else:
+            row("过", "7a门槛", f"7a {sc7:.0f} ≥ {need:.0f}{miss}。")
+        hs_ok = hs_n is not None and hs_n >= 5 and (hs_raw or 0) >= 1.0
+        if not (hs_ok or vr_n >= 1.5):
+            row("挡", "换手/量比",
+                f"现换手{_n(hs_raw, 1, '%')}、全天折算{_n(hs_n, 1, '%')}、归一量比{vr_n:.2f}。"
+                "要换手折算≥5%（且现换手≥1%）或量比≥1.5。",
+                "量能够门槛")
+        else:
+            row("过", "换手/量比",
+                f"现换手{_n(hs_raw, 1, '%')}、折算{_n(hs_n, 1, '%')}、量比{vr_n:.2f}，量够。")
+        if phase == "退潮":
+            dd = fac.get("dd")
+            if oh in ("偏热", "不追"):
+                row("挡", "退潮只做低位", "情绪退潮且这只已经偏热，游资不追。", "等回踩或低位转强")
+            elif dd is not None and dd > -0.12:
+                row("挡", "退潮只做低位",
+                    f"回撤{dd * 100:.1f}%，退潮只要离前高≥12%的低位转强。",
+                    "更深回撤后再转强")
+            else:
+                row("过", "退潮只做低位", f"回撤{_n((fac.get('dd') or 0) * 100, 1, '%')}，还在低位窗口。")
+
+    if kind == "打板":
+        setup = db.get("setup") or "非打板池"
+        dscore = db.get("score") or 0
+        n7, n_lian = db.get("n7") or 0, db.get("n_lian") or 0
+        if is_limit_up(code, chg, name):
+            row("挡", "打板今首板不追", "今天自己封住了，打板不当天追首板。", "次日看一进二/弱转强")
+        elif setup in ("一进二", "弱转强") and dscore >= 75:
+            row("过", "打板形态", f"{setup}，打板分{dscore:.0f}≥75，近7日{n7}板、连板{n_lian}。")
+        elif setup == "龙回头" and dscore >= 80:
+            row("过", "打板形态", f"龙回头，打板分{dscore:.0f}≥80。")
+        elif db.get("in_pool"):
+            need_s = 80 if setup == "龙回头" else 75
+            row("挡", "打板形态",
+                f"{setup}，打板分{dscore:.0f}（要≥{need_s}），近7日{n7}板、连板{n_lian}。{db.get('why') or ''}",
+                f"形态确认且打板分到{need_s}")
+        else:
+            row("未触发", "打板形态", "近7日无涨停，不进打板池。这只走趋势/游资闸。")
+
+    if kind == "ETF":
+        sc7 = yz.get("score") or 0
+        if sc7 >= 60 and (chg or 0) < 5 and "可小仓" in (yz.get("how") or ""):
+            row("过", "ETF闸", f"盘面分{sc7:.0f}≥60，今涨{_n(chg, 2, '%')}<5%。")
+        elif sc7 >= 50:
+            row("挡", "ETF闸", f"盘面分{sc7:.0f}，未同时满足≥60且今涨<5%。", "分到60且涨幅压住")
+        else:
+            row("挡", "ETF闸", f"盘面分{sc7:.0f}<50，ETF不做。", "跟主线且分到50以上才观察")
+
+    if "刚过线" in (why or "") or "滞后带" in (why or ""):
+        row("挡" if blocked else "过", "滞后带",
+            why + "。硬否决（回避/骗炮/涨停）不会走滞后带，分数刚过线才等下一次。")
+
+    bind = next(((t, d) for stt, t, d in rows if stt == "挡"), None)
+    if not bind and call in ("可小仓", "可试仓"):
+        bind = (call, why or "硬闸和结构闸都过了")
+    elif not bind:
+        bind = ("未过闸", why or "没有单独标出挡的那条，看结构闸")
+    return rows, bind, flips
+
+
 def explain_analyze(s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
-                    mood, late, doable, avoid, flow, htag, sc, tape_txt, is_etf):
-    """单次分析的可读依据。闸结论仍用 call/why，这里只把数据和原因摊开。"""
+                    mood, late, doable, avoid, flow, htag, sc, tape_txt, is_etf,
+                    heat_map=None, yld=False):
+    """单次分析的可读依据。闸结论仍用 call/why，这里把判定条件和数据摊开。"""
     fac = fac or {}
     yz = yz or {}
     q = q or {}
@@ -4615,7 +4821,39 @@ def explain_analyze(s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
     vs_ma20 = ((px / ma20 - 1) * 100) if px and ma20 else None
     gap = ((o / prev - 1) * 100) if o and prev else None
 
-    add("结论", f"{hand_of(call)}。买点闸是「{call}」：{why}。值分 { _n(sc, 0) } 只排队，不替代闸。")
+    rows, bind, flips = _gate_check_rows(
+        s, q, fac, yz, st, line, kind, call, why, auc, db, mood, late,
+        flow, heat_map, yld, is_etf,
+    )
+    bind_title, bind_detail = bind
+    gate_name = {"趋势": "趋势闸", "游资": "游资闸", "打板": "打板闸", "ETF": "ETF闸"}.get(kind, "买点闸")
+    flip_txt = "；".join(dict.fromkeys(flips)) if flips else ""
+    if call in ("可小仓", "可试仓") and not flips:
+        stuck = f"硬闸和结构闸都过了。{why}"
+    else:
+        stuck = f"卡在「{bind_title}」：{bind_detail}"
+        if flip_txt:
+            stuck += f" 要翻成可小仓：{flip_txt}。"
+    add(
+        "结论",
+        f"{hand_of(call)}。走{gate_name}，买点「{call}」。{stuck}"
+        f"值分 {_n(sc, 0)} 只在已经过闸的票里排队，不能把观察抬成可小仓。",
+    )
+
+    hard = [r for r in rows if r[1] in (
+        "昨跌停骗炮", "今涨停不追", "今涨过热", "竞价涨停开后砸盘",
+        "主线回避", "全市场情绪", "尾盘/休市不新开", "打板今首板不追",
+    )]
+    struct = [r for r in rows if r not in hard]
+    add(
+        "判定·硬闸",
+        "一票否决，挡一条就停。\n" + "\n".join(f"{a}「{b}」{c}" for a, b, c in hard),
+    )
+    if struct:
+        add(
+            "判定·结构闸",
+            f"走{gate_name}才看这些。\n" + "\n".join(f"{a}「{b}」{c}" for a, b, c in struct),
+        )
 
     loc = []
     loc.append(f"现价{_n(px)}，今{_n(chg, 2, '%')}，开{_n(o)} 高{_n(h)} 低{_n(lo)}，昨收{_n(prev)}")
@@ -4638,79 +4876,79 @@ def explain_analyze(s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
         loc.append("；".join(ma_bits))
     add("价格位置", "。".join(loc) + "。")
 
-    gate = []
-    if is_etf:
-        gate.append(f"走ETF闸，盘面分{tape_txt}")
-    elif kind == "游资":
-        gate.append(f"走游资闸，7a { _n(yz.get('score'), 0) }（满仓线65），{yz.get('how') or ''}")
-        if late:
-            gate.append("14:30后游资默认不新开")
-        if (mood or {}).get("phase") == "退潮":
-            gate.append("全市场情绪退潮，游资空仓优先")
-        hs_ok = (hs is not None and hs >= 5) or (vr or 0) >= 1.5
-        gate.append(
-            f"换手{_n(hs, 2, '%')}、量比{_n(vr, 2)}"
-            + ("，量能够门槛" if hs_ok else "，换手要≥5%或量比≥1.5才过闸")
-        )
-    elif kind == "打板":
-        gate.append(f"打板仓过闸：{(db or {}).get('setup') or ''} {why}")
-        gate.append("打板可小仓不占用7a≥65，但今涨停不追、昨跌停骗炮、主线回避、退潮仍一票否决")
-    else:
-        cap = trend_chg_cap(s["code"], fac.get("atr_pct"))
-        gate.append(f"走趋势闸。今涨上限约{cap:.1f}%（ATR/板），站上均价且未破关键低才谈小仓")
-        if fac.get("vwap_reclaim"):
-            gate.append("属于先破均价再收回" + ("，且守住当日关键低" if fac.get("vwap_held") else "，但已破当日关键低"))
-        if (vr or 0) < 1:
-            gate.append(f"量比{_n(vr, 2)}偏弱，无量站上均价胜率差")
-        if fac.get("vp") == "价涨资金出":
-            gate.append("价涨资金出，趋势不能小仓")
-        if rsi is not None and rsi >= 70:
-            gate.append(f"RSI {rsi:.1f}≥70，过热等回踩")
-    if st == "回避" and call in ("观察", "不买"):
-        gate.append(f"所属主线「{line}」资金净出，回避的是这条线自己的钱在出，不是因为涨得多、也不是兄弟板块连坐")
-    add("买点闸", "。".join(x for x in gate if x) + "。")
-
     inn_s = "、".join(list(doable)[:8]) or "暂无净流入主线"
-    out_s = "、".join(list(avoid)[:8]) or "暂无净流出主线"
+    desk = desk_lines_of(WL.get("stocks"), WL.get("etfs"))
+    if line and line not in desk:
+        desk = list(desk) + [line]
+    shown_avoid = avoid_for_desk(avoid, desk)
+    out_s = "、".join(list(shown_avoid)[:8]) or "暂无净流出主线（自选对口）"
+    hh = (heat_map or {}).get(line) or {}
+    line_amt = hh.get("amt")
+    line_chg = hh.get("chg")
+    flow_note = ""
+    if line_amt is not None:
+        flow_note = f"本线当日主力{line_amt:+.1f}亿"
+        if line_chg is not None:
+            flow_note += f"、涨跌{line_chg:+.2f}%"
+        if line_amt < 0 and (line_chg or 0) > 0:
+            flow_note += "，典型价涨资金出"
+        flow_note += "。"
     add(
         "主线资金",
-        f"这只归属板块「{s.get('board') or '-'}」→ 主线「{line}」，状态「{st}」（{htag}）。"
-        f"今日可做：{inn_s}。今日回避：{out_s}。热门涨幅不等于主力在进。",
+        f"板块「{s.get('board') or '-'}」→ 主线「{line}」，状态「{st}」（{htag}）。{flow_note}"
+        f"今日可做：{inn_s}。今日回避：{out_s}。"
+        "首页回避只显示自选对口线；汽车/煤炭/银行即使全市场在跌也不进这套闸。"
+        "板块热度和主线可做/回避是同一笔当日主力，不是两道条件。",
     )
 
     main = (flow or {}).get("main")
     main5 = (flow or {}).get("main5")
     xlarge = (flow or {}).get("xlarge")
+    same = yz.get("same_txt") or ""
+    stock_miss = not stock_flow_ok(flow)
     add(
         "个股资金",
-        f"今主力{_yi(main)}，超大单{_yi(xlarge)}，近5日主力{_yi(main5)}。"
-        f"{yz.get('same_txt') or ''}。量价标注：{fac.get('vp') or '-'}。{yz.get('flow_txt') or ''}",
+        ("接口没拉到今主力，按缺数据处理，不当中性放行。" if stock_miss else "")
+        + f"今主力{_yi(main)}，超大单{_yi(xlarge)}，近5日主力{_yi(main5)}。"
+        + (f"{same}。" if same else "")
+        + f"量价标注：{fac.get('vp') or '-'}。"
+        + ("今主力是加分项，主线回避仍一票否决。" if st == "回避" else ""),
     )
 
+    tape_bits = [x for x in (
+        fac.get("orb"), fac.get("pullback"), fac.get("slope_txt"),
+        fac.get("yhl"), fac.get("vwap_pos"), fac.get("pos"), fac.get("rs_txt"),
+    ) if x]
     add(
         "量能盘面",
-        f"量比{_n(vr, 2)}，换手{_n(hs, 2, '%')}，振幅{_n(q.get('amp'), 2, '%')}。"
-        f"{fac.get('orb') or ''}；{fac.get('pullback') or ''}；{fac.get('slope_txt') or ''}；"
-        f"{fac.get('yhl') or ''}；{fac.get('vwap_pos') or ''}；{fac.get('pos') or ''}；"
-        f"{fac.get('rs_txt') or ''}。买点分{_n(fac.get('entry'), 0)}，均线分{_n(fac.get('buy'), 0)}。",
+        f"量比{_n(vr, 2)}（归一{vr_norm(vr or 0):.2f}），换手{_n(hs, 2, '%')}"
+        f"（全天折算{_n(hs_proj(hs), 1, '%')}），振幅{_n(q.get('amp'), 2, '%')}。"
+        + (("盘面：" + "；".join(tape_bits) + "。") if tape_bits else "")
+        + f"买点分{_n(fac.get('entry'), 0)}，均线分{_n(fac.get('buy'), 0)}。"
+        + (f"盘面列 {tape_txt}。" if tape_txt else ""),
     )
 
     abits = "，".join(auc.get("bits") or [])
+    hold_open = px and o and px >= o
     add(
         "集合竞价",
-        f"{auc.get('call') or '竞价缺'}：{auc.get('why') or '无'}。"
-        f"{abits + '。' if abits else ''}"
-        f"开后现价相对开盘{'站稳' if px and o and px >= o else '已弱于开盘'}。",
+        f"{auc.get('call') or '竞价缺'}：{auc.get('why') or '无记录'}。"
+        + (f"{abits}。" if abits else "")
+        + f"开幅{_n(gap, 2, '%')}，开后现价相对开盘{'站稳' if hold_open else '已弱于开盘'}。"
+        + ("竞价只解释开盘形态，不单独改买点；骗炮/砸盘已经在硬闸里。" if auc else ""),
     )
 
     if not is_etf and yz:
         marks = yz.get("marks") or {}
         mk = "；".join(f"{a}{b}" for a, b in marks.items()) if marks else (yz.get("factor_line") or "")
+        need = youzi_enter_need(yz, mood)
         add(
             "游资7a",
-            f"{_n(yz.get('score'), 0)}分，{yz.get('how') or ''}。"
-            f"板块：{yz.get('sec_txt') or '-'}。弹性{yz.get('elast_mark') or '-'}，"
-            f"距涨停还剩约{_n(yz.get('room'), 1, '%')}。因子：{mk}。",
+            f"{_n(yz.get('score'), 0)}分 / 门槛{need:.0f}，{yz.get('how') or ''}。"
+            f"板块因子：{yz.get('sec_txt') or '-'}。弹性{yz.get('elast_mark') or '-'}，"
+            f"距涨停还剩约{_n(yz.get('room'), 1, '%')}。"
+            + (f"因子：{mk}。" if mk else "")
+            + ("7a是游资仓的盘面分；这只当前不走游资闸，只作对照。" if kind != "游资" else ""),
         )
 
     if db and db.get("in_pool"):
@@ -4719,16 +4957,20 @@ def explain_analyze(s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
             "打板战法",
             f"{db.get('setup') or ''}，打板分{_n(db.get('score'), 0)}，闸「{db.get('call') or ''}」。"
             f"{db.get('why') or ''}。近7日涨停{db.get('n7') or 0}次，连板{db.get('n_lian') or 0}。"
-            + (f"细节：{bits}。" if bits else ""),
+            + (f"细节：{bits}。" if bits else "")
+            + "今首板不追；能买的是昨首板一进二、弱转强或龙回头。",
         )
     elif not is_etf:
-        add("打板战法", "近7日无涨停，不进打板池。游资仓仍看7a，趋势仓看均价/均线闸。")
+        add("打板战法", "近7日无涨停，不进打板池。这只不走打板闸。")
 
     phase = (mood or {}).get("phase") or "不明"
+    nzt = (mood or {}).get("n_zt")
     add(
         "情绪时点",
-        f"市场情绪「{phase}」。"
-        + ("已过14:30，游资/打板不新开。" if late else "盘中时段，仍可按闸排队。")
+        f"全市场涨停情绪「{phase}」"
+        + (f"（涨停{nzt}家）" if nzt else "")
+        + "，和主线资金不是同一个条件。"
+        + ("已过14:30或休市，游资/打板不新开。" if late else "盘中时段，仍可按闸排队。")
         + "左侧超跌不能替代右侧买点。",
     )
 
@@ -4752,7 +4994,7 @@ def explain_analyze(s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
 
     add(
         "怎么用",
-        "先看买点闸能不能下手，再看主线是不是回避，再看竞价有没有骗炮。"
+        "先看硬闸（涨停/骗炮/砸盘/主线回避/退潮/尾盘），再看结构闸（均价、MA20、7a、换手）。"
         "值分只在能买的里面排队。单次分析不写入自选，也不代下单。",
     )
     return reasons
@@ -4964,6 +5206,7 @@ def analyze_one(code, board="自选", kind_hint=""):
     reasons = explain_analyze(
         s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
         mood, late, doable, avoid, flow, htag, sc, tape_txt, is_etf,
+        heat_map=heat_map, yld=yld,
     )
     return {
         "ok": True,

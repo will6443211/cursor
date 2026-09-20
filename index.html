@@ -77,8 +77,9 @@
     .scan { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin:8px 0 10px; }
     .scan h3 { margin:0 0 10px; font-size:18px; line-height:1.4; }
     .scan .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
-    .scan .why { color:var(--muted); font-size:14px; margin-top:10px; line-height:1.7; overflow-wrap:anywhere; }
+    .scan .why { color:var(--muted); font-size:14px; margin-top:10px; line-height:1.7; overflow-wrap:anywhere; white-space:pre-wrap; }
     .scan .why b { color:#fff; font-weight:700; margin-right:8px; }
+    .scan .why b.bad { color:var(--bad); }
     .scan .why-h { color:var(--ice); font-size:13px; font-weight:650; margin:16px 0 2px; }
     .drawer { display:none; position:fixed; top:0; right:0; width:min(440px,100vw); height:100%;
       background:#111110; border-left:1px solid var(--line); z-index:2147483600; overflow:auto;
@@ -641,7 +642,11 @@
           <div class="card"><div class="k">止损 / 止盈</div><div class="v">${(d.exits && d.exits.txt) ? d.exits.txt : "未过闸不算"}</div></div>
         </div>
         <div class="why-h">判断依据</div>
-        ${((d.reasons && d.reasons.length) ? d.reasons : [{k:"为什么", v:(d.why||"—") + (sc.auction_why ? ("。竞价："+sc.auction_why) : "")}]).map(r => `<p class="why"><b>${esc(r.k)}</b>${esc(r.v)}</p>`).join("")}
+        ${((d.reasons && d.reasons.length) ? d.reasons : [{k:"为什么", v:(d.why||"—") + (sc.auction_why ? ("。竞价："+sc.auction_why) : "")}]).map(r => {
+          const kc = String(r.k||"");
+          const tag = (kc.indexOf("硬闸")>=0 || (r.v||"").indexOf("挡「")>=0) ? "bad" : "";
+          return `<p class="why"><b class="${tag}">${esc(r.k)}</b>${esc(r.v)}</p>`;
+        }).join("")}
         <div class="why">模块 ${d.module_ok ?? 0}/${d.module_n ?? 0}：${(d.modules||[]).map(m => esc(m.name) + (m.ok?"":"(缺)") + (m.note?(" "+esc(m.note)):"")).join(" · ")}</div>`;
       if (mode() === "watch") {
         box.style.display = "block";

@@ -319,13 +319,29 @@ VOL_CURVE = [
 ]
 
 
+def cn_session_closed(now=None):
+    """周末或非连续竞价时段：按收盘后，不按墙上时钟的 9:30-15:00。"""
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    if now.weekday() >= 5:
+        return True
+    hm = now.strftime("%H:%M")
+    return hm < "09:30" or hm >= "15:00"
+
+
+def youzi_late(now=None):
+    """游资/打板不新开：周末、盘前、14:30后、收盘后。"""
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    if now.weekday() >= 5:
+        return True
+    tmin = now.hour * 60 + now.minute
+    return tmin < 9 * 60 + 30 or tmin >= 14 * 60 + 30
+
+
 def session_progress(now=None):
-    """(已走时间占比, 应完成成交量占比)。收盘后/盘前都给 (1,1)，阈值不做时段调整。"""
+    """(已走时间占比, 应完成成交量占比)。收盘后/盘前/周末都给 (1,1)，阈值不做时段调整。"""
     now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     hm = now.strftime("%H:%M")
-    if hm < "09:30":
-        return 1.0, 1.0
-    if hm >= "15:00":
+    if cn_session_closed(now):
         return 1.0, 1.0
     if "11:30" <= hm < "13:00":
         return 0.5, 0.54
@@ -3171,7 +3187,7 @@ def gate_state_load():
     global GATE_PREV
     try:
         blob = json.load(open(GATE_PATH, encoding="utf-8"))
-        today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
+        today = session_date()
         GATE_PREV = blob.get("codes") or {} if blob.get("date") == today else {}
     except Exception:
         GATE_PREV = {}
@@ -3182,7 +3198,7 @@ def gate_state_save():
         now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
         os.makedirs(os.path.dirname(GATE_PATH), exist_ok=True)
         json.dump(
-            {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"), "codes": GATE_NOW},
+            {"date": session_date(now), "time": now.strftime("%H:%M"), "codes": GATE_NOW},
             open(GATE_PATH, "w", encoding="utf-8"), ensure_ascii=False,
         )
     except Exception:
@@ -3260,7 +3276,10 @@ def journal_load(months=3):
 def journal_record(rows, now):
     """可小仓：每个交易日每只票只记第一次入选（入选日+入选价）。
     其他结论每天每种只记一次，给闸区分度对照，不进筛选胜率表。"""
-    date_s, time_s = session_date(now), now.strftime("%H:%M")
+    date_s = session_date(now)
+    time_s = now.strftime("%H:%M")
+    if cn_session_closed(now) and time_s < "15:00":
+        time_s = "15:01"
     old = journal_load(1)
     have_pick = {(r.get("date"), r.get("code")) for r in old if r.get("call") == "可小仓"}
     have = {(r.get("date"), r.get("code"), r.get("call")) for r in old}
@@ -3378,6 +3397,12 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1):
         nxt_close = nxt[4] if nxt_done else None
         hm = _hm_min(r.get("time"))
         live = 9 * 60 + 30 <= hm <= 14 * 60 + 50
+        try:
+            ds = datetime.datetime.strptime(str(r.get("date") or ""), "%Y-%m-%d")
+            if ds.weekday() >= 5:
+                live = False
+        except ValueError:
+            pass
         if live:
             entry, how = px, "盘中价"
         else:
@@ -4680,7 +4705,7 @@ def analyze_one(code, board="自选", kind_hint=""):
         mood = {"phase": "不明"}
     ran("情绪", bool(mood.get("phase") and mood.get("phase") != "不明"), mood.get("phase") or "")
     ran("涨停池", bool(zt_t_rows or zt_y_rows), f"今{len(zt_t_rows)}/昨{len(zt_y_rows)}")
-    late = now.hour > 14 or (now.hour == 14 and now.minute >= 30)
+    late = youzi_late(now)
     # 板块热度要和批量报告同一个口径：统计自选里同板块的票有几只在涨且主力净进。
     # 过去这里只放当前这一只（样本=1），7a 的「个股热钱同向」那一档永远不可能触发，
     # 同一只票在网页和报告上 7a 分数会差几分，刚好能跨过 65 那条线。
@@ -5335,12 +5360,8 @@ def main():
     else:
         line_block.append("主线上的筛选票：无")
 
-    tmin = now.hour * 60 + now.minute
-    # 14:30 之后一律算尾盘，收盘后更不能开新仓。
-    # 原来上界卡在 15:00，导致收盘后跑的报告把游资票重新标成「可小仓」，
-    # 而单股分析页同一只票显示「尾盘不新开」，两处对不上。
-    late_youzi = tmin >= 14 * 60 + 30
-    after_close = tmin >= 15 * 60
+    late_youzi = youzi_late(now)
+    after_close = cn_session_closed(now)
     verdicts = {}
     daban_by_code = {}
     for s, q, f, yld, hist in rows:

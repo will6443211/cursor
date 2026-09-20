@@ -23,7 +23,12 @@
     .top { flex:0 0 auto; position:relative; z-index:5;
       padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;
       border-bottom:1px solid var(--line); background:#111110; }
-    .brand { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+    .brand { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    .head-right { flex:1 1 220px; min-width:0; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+    .ovn-news { width:100%; max-width:640px; text-align:right; font-size:12px; line-height:1.5;
+      color:var(--muted); overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical;
+      -webkit-line-clamp:3; }
+    .ovn-news b { color:#c5c2b6; font-weight:650; margin-right:6px; }
     .eyebrow { font-size:12px; letter-spacing:.12em; color:var(--ice); margin:0 0 4px; font-weight:600; }
     .top h1 { margin:0; font-size:22px; font-weight:700; letter-spacing:0; color:#fff; line-height:1.4; }
     .clock { margin:6px 0 0; font-family:var(--mono); font-size:15px; font-weight:500; color:#c5c2b6;
@@ -42,7 +47,7 @@
     .toolbar input:focus { outline:none; border-color:var(--ice); }
     .toolbar .act { flex:0 0 auto; }
     .idx-tape { display:flex; flex-wrap:wrap; gap:6px; align-items:stretch;
-      flex:1 1 160px; justify-content:flex-end; min-width:0; }
+      justify-content:flex-end; min-width:0; width:100%; }
     .idx-chip {
       font-family:var(--mono); font-size:11px; line-height:1.25;
       padding:6px 8px; border-radius:8px; background:#1c1c1a;
@@ -58,6 +63,7 @@
       -webkit-overflow-scrolling:touch; padding-bottom:2px; scrollbar-width:thin; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
       padding:10px 12px; min-width:136px; flex:0 0 auto; }
+    .card.wide { min-width:220px; }
     .card .k { font-size:12px; color:var(--muted); }
     .card .v { font-size:14px; font-weight:650; margin-top:6px; line-height:1.45; overflow-wrap:anywhere; color:#fff; }
     .links { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; margin:6px 0 0; align-items:center; }
@@ -126,6 +132,9 @@
     @media (max-width:859px) {
       .drawer { width:100vw; border-left:0; z-index:2147483600; }
       .eyebrow { display:none; }
+      .head-right { flex:1 1 100%; align-items:stretch; order:3; }
+      .ovn-news { text-align:left; max-width:none; -webkit-line-clamp:2; }
+      .brand { flex-wrap:wrap; }
       .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 10px; }
       .top h1 { font-size:18px; line-height:1.4; }
       .clock { font-size:14px; }
@@ -167,13 +176,16 @@
           <p class="clock" id="clock">—</p>
           <p class="meta" id="meta">正在加载…</p>
         </div>
+        <div class="head-right">
+          <div class="ovn-news" id="ovn-news"></div>
+          <div class="idx-tape" id="idx-tape" aria-label="本轮快照大盘"></div>
+        </div>
         <button class="toggle" id="toggle" type="button">管理自选</button>
       </div>
       <div class="toolbar" id="toolbar">
         <input id="scan-code" maxlength="16" placeholder="代码或名称" autocomplete="off">
         <button class="act" id="btn-analyze" type="button">分析</button>
         <button class="act warn" id="btn-runall" type="button">重跑自选</button>
-        <div class="idx-tape" id="idx-tape" aria-label="本轮快照大盘"></div>
       </div>
       <div id="report-head">
         <div class="cards" id="cards"></div>
@@ -436,20 +448,27 @@
           }).join("、")
         : ((d.avoid || []).join("、") || "无（自选对口未净出）");
       const desk = d.ovn_desk || {};
+      const hx = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+      const boards = (desk.boards || []).join("、") || "暂无映射";
+      const names = (desk.names || []).join("、") || "先看板块";
+      const newsEl = document.getElementById("ovn-news");
+      if (newsEl) {
+        newsEl.innerHTML = desk.news
+          ? `<b>隔夜消息</b>${hx(desk.news)}`
+          : `<b>隔夜消息</b>快讯暂缺`;
+        newsEl.title = desk.news || "快讯暂缺";
+      }
       const cards = [
-        ["能不能买", (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不")],
-        ["总闸", d.buy_today || "—", cls(d.buy_today)],
-        ["首选", pick, ""],
-        ["最值得买", top5, ""],
-        ["可做主线", (d.doable || []).join("、") || "—", "ok"],
-        ["回避主线", avoidBits, "bad"],
-        ["隔夜盘面", [desk.bias, desk.tape].filter(Boolean).join(" · ") || "—", "watchc"],
-        ["次日板块", (desk.boards || []).join("、") || "暂无映射", ""],
-        ["次日个股", (desk.names || []).join("、") || "先看板块", ""],
-        ["隔夜消息", desk.news || "快讯暂缺", "watchc"],
+        ["能不能买", (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
+        ["总闸", d.buy_today || "—", cls(d.buy_today), ""],
+        ["首选", pick, "", ""],
+        ["最值得买", top5, "", ""],
+        ["可做主线", (d.doable || []).join("、") || "—", "ok", ""],
+        ["回避主线", avoidBits, "bad", ""],
+        ["次日关注", "板块 " + boards + " · 个股 " + names, "", "wide"],
       ];
-      document.getElementById("cards").innerHTML = cards.map(([k,v,c]) =>
-        `<div class="card"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`
+      document.getElementById("cards").innerHTML = cards.map(([k,v,c,extra]) =>
+        `<div class="card ${extra||""}"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`
       ).join("");
       if (t && t !== lastSnap) {
         lastSnap = t;

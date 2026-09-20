@@ -493,7 +493,7 @@
         newsEl.title = bits.join("；") || "快讯暂缺";
       }
       const cards = [
-        ["能不能买", (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
+        ["能不能买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
         ["总闸", d.buy_today || "—", cls(d.buy_today), ""],
         ["首选", pick, "", ""],
         ["最值得买", top5, "", ""],

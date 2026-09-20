@@ -506,7 +506,8 @@ def yday_limit_down(code, hist):
 
 
 def yday_dt_shape(q, yld):
-    """昨跌停次日：trap骗炮 / turn弱转强 / weak续弱。不再一刀切不买。"""
+    """昨跌停次日：trap骗炮 / turn弱转强 / weak续弱。
+    高开 0.5% 且现价略低于开盘太容易误杀；骗炮要高开明显，并且真走弱（收绿/破均价/冲高回落）。"""
     if not yld or not q or not q.get("prev"):
         return None
     o, p, prev = q["open"], q["px"], q["prev"]
@@ -515,12 +516,14 @@ def yday_dt_shape(q, yld):
     gap = (o / prev - 1) * 100
     chg = q["chg"]
     vr = vr_norm(q.get("vol_ratio") or 0)
-    if gap >= 0.5 and p < o:
+    drop_h = ((h - p) / h * 100) if h else 0
+    below_vwap = bool(vwap) and p < vwap
+    weak_tape = chg < 0 or below_vwap or drop_h >= 1.0
+    if gap >= 1.0 and p < o and weak_tape:
         return "trap"
-    if gap <= -0.15 and h > prev and p < o:
+    if gap <= -0.4 and h > prev and p < o and (chg < 0 or below_vwap or drop_h >= 1.2):
         return "trap"
-    # 弱转强要的是低开+站上均价+放量，不是随便飘个红
-    if chg > 0 and gap <= -1.0 and p >= o and (vwap is None or p >= vwap) and vr >= 1.2:
+    if chg > 0 and gap <= -0.8 and p >= o and (vwap is None or p >= vwap) and vr >= 1.0:
         return "turn"
     if chg > 0:
         return "weak"
@@ -1191,6 +1194,31 @@ def stock_kind(s, q, hist=None):
     return "趋势"
 
 
+def session_kind(code, raw):
+    """同一交易日不换仓种，避免均线闸和 7a 闸来回跳。"""
+    if raw == "ETF":
+        return "ETF"
+    prev = (GATE_PREV.get(code) or {}).get("kind")
+    if prev in ("趋势", "游资") and raw in ("趋势", "游资"):
+        return prev
+    return raw
+
+
+def stock_flow_ok(flow):
+    """接口里有这条就算有资金数据；主力=0 是真的平，缺字段才是没拉到。"""
+    return isinstance(flow, dict) and ("main" in flow or "main5" in flow)
+
+
+def youzi_enter_need(yz, mood=None):
+    """游资可小仓门槛。资金缺或情绪退潮时抬高，不把缺数据当成中性放行。"""
+    need = 65
+    if (yz or {}).get("flow_miss"):
+        need = 72
+    if (mood or {}).get("phase") == "退潮":
+        need = max(need, 75)
+    return need
+
+
 def em_secid(s):
     return f"{0 if s['market'] == 'sz' else 1}.{s['code']}"
 
@@ -1245,9 +1273,14 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
     xlarge = (flow or {}).get("xlarge") or 0
     board_heat = board_heat or {}
     up_in, n_b = board_heat.get(board, (0, 0))
+    sector_miss = not inn_lines and not out_lines
+    stock_miss = not stock_flow_ok(flow)
+    flow_miss = sector_miss or stock_miss
 
-    # 1 板块资金：行业主力是否同向；光模块等允许「个股热钱自己干」
-    if line in inn_lines or (n_b and up_in >= 2):
+    # 1 板块资金：行业主力是否同向；缺数据不当中性放行
+    if sector_miss:
+        s_sec, sec_txt, sec_mark = 40, "板块资金缺", "缺"
+    elif line in inn_lines or (n_b and up_in >= 2):
         s_sec = 90 if line in inn_lines else 82
         sec_txt = "板块流入" if line in inn_lines else f"{board}个股热钱同向"
         sec_mark = "同向"
@@ -1263,21 +1296,27 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
         sec_mark = "中性"
 
     # 2 主力5日 + 今主力（昨单日接口不稳，5日+今是代理）
-    s_main_td = clip(50 + main / 1e8 * 3.5, 0, 100)
-    s_main5 = clip(50 + main5 / 1e8 * 3, 0, 100)
-    main5_mark = "5日进" if main5 > 0 else ("5日出" if main5 < 0 else "5日平")
-
-    # 3 资金-涨幅同向：涨但大单出 = 出货嫌疑
-    if chg >= 0.3 and main > 0:
-        s_same, same_txt, same_mark = 100, "涨和主力同向", "同向"
-    elif chg >= 0.3 and main < 0:
-        s_same, same_txt, same_mark = 18, "涨但主力出/出货嫌疑", "出货"
-    elif chg <= -0.3 and main < 0:
-        s_same, same_txt, same_mark = 28, "跌和主力同向砸", "同砸"
-    elif chg <= -0.3 and main > 0:
-        s_same, same_txt, same_mark = 58, "价弱单进", "背离接"
+    if stock_miss:
+        s_main_td, s_main5 = 40, 40
+        main5_mark = "5日缺"
+        s_same, same_txt, same_mark = 42, "个股资金缺", "缺"
+        main = main5 = xlarge = 0
     else:
-        s_same, same_txt, same_mark = 50, "资金涨幅不明显", "不明"
+        s_main_td = clip(50 + main / 1e8 * 3.5, 0, 100)
+        s_main5 = clip(50 + main5 / 1e8 * 3, 0, 100)
+        main5_mark = "5日进" if main5 > 0 else ("5日出" if main5 < 0 else "5日平")
+
+        # 3 资金-涨幅同向：涨但大单出 = 出货嫌疑
+        if chg >= 0.3 and main > 0:
+            s_same, same_txt, same_mark = 100, "涨和主力同向", "同向"
+        elif chg >= 0.3 and main < 0:
+            s_same, same_txt, same_mark = 18, "涨但主力出/出货嫌疑", "出货"
+        elif chg <= -0.3 and main < 0:
+            s_same, same_txt, same_mark = 28, "跌和主力同向砸", "同砸"
+        elif chg <= -0.3 and main > 0:
+            s_same, same_txt, same_mark = 58, "价弱单进", "背离接"
+        else:
+            s_same, same_txt, same_mark = 50, "资金涨幅不明显", "不明"
 
     # 4 游资弹性：小市值+高量比+高振幅；20cm加分
     size = clip(120 - yi / 20, 0, 100)
@@ -1377,7 +1416,7 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
         chase += 35
         chase_bits.append("昨跌停骗炮")
     elif dt == "weak":
-        chase += 18
+        chase += 10
         chase_bits.append("昨跌停偏弱")
     elif dt == "turn":
         chase += 8
@@ -1447,6 +1486,7 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
         "same_txt": same_txt, "same_mark": same_mark,
         "hold": s_hold, "hold_mark": hold_mark, "seal": seal, "n_open": n_open,
         "overheat": oh, "vr_norm": vr, "vr_raw": vr_raw,
+        "flow_miss": flow_miss, "sector_miss": sector_miss, "stock_miss": stock_miss,
         "marks": {
             "板块资金": sec_mark, "资金合成": same_mark, "主力5日": main5_mark,
             "游资弹性": elast_mark, "涨停空间": room_mark, "竞价质量": auc_mark,
@@ -2807,13 +2847,13 @@ def market_mood(zt_rows=None, env=None):
 
     # 情绪分档：家数 + 连板梯队 + 昨板赚钱效应。之前打板分里引用的「发酵/启动」是死档，现在补上
     if prem is not None and prem <= -1.5 and n_zt < 60:
-        phase, note = "退潮", "昨板today亏钱，打板空仓、游资只看"
+        phase, note = "退潮", "昨板today亏钱，打板空仓；游资只做低位且7a≥75；趋势不追热"
     elif n_zt >= 80 and (lad.get("high") or 0) >= 5:
         phase, note = "高潮", "跟风可看，不追高标、不接最高板"
     elif n_zt >= 45 and n_lian >= 6 and (prem is None or prem >= 0):
         phase, note = "发酵", "梯队在长，首板/一进二是主战场"
     elif n_zt < 20 or n_dt >= max(15, n_zt):
-        phase, note = "退潮", "游资只看不追，不做首板高潮假设"
+        phase, note = "退潮", "打板空仓；游资抬高门槛只做低位转强；趋势不追热"
     elif n_zt < 40:
         phase, note = "修复", "情绪一般，只做低位转强"
     else:
@@ -3229,7 +3269,14 @@ def hysteresis(code, call, why, score=None, enter=None, hold=None, soft=SOFT_DOW
     ):
         out_call = "可小仓"
         out_why = f"在滞后带内（{score:.0f}≥{hold:.0f}），维持可小仓不来回改口（原因：{why}）"
-    GATE_NOW[code] = {"call": out_call, "raw": call, "marginal": bool(marginal), "score": round(score or 0, 1)}
+    rec = {
+        "call": out_call, "raw": call, "marginal": bool(marginal),
+        "score": round(score or 0, 1),
+    }
+    kind = (GATE_NOW.get(code) or {}).get("kind") or (GATE_PREV.get(code) or {}).get("kind")
+    if kind:
+        rec["kind"] = kind
+    GATE_NOW[code] = rec
     return out_call, out_why
 
 
@@ -3675,11 +3722,15 @@ def name_call(s, q, f, yld):
 SKIP_HOW = ("骗炮", "空间见顶", "涨停，", "结束/观察")
 
 
-def verdict_trend(s, q, f, yld, st):
-    """趋势仓最终买点。不改 name_call。过线后加滞后带，避免同日反复改口。"""
+def verdict_trend(s, q, f, yld, st, mood=None):
+    """趋势仓最终买点。不改 name_call。过线后加滞后带，避免同日反复改口。
+    情绪退潮时不追偏热，干净的均线+均价结构仍可小仓。"""
     call, why = name_call(s, q, f, yld)
     if call == "可小仓" and st == "回避":
         return "观察", "主线回避"
+    oh = overheat(s["code"], q.get("chg"), q.get("name"))
+    if call == "可小仓" and (mood or {}).get("phase") == "退潮" and oh in ("偏热", "不追"):
+        call, why = "观察", "情绪退潮，趋势也不追热"
     ent = (f or {}).get("entry")
     if call in ("可小仓", "观察") and ent:
         return hysteresis(s["code"], call, why, ent, 55, 48)
@@ -3688,36 +3739,47 @@ def verdict_trend(s, q, f, yld, st):
 
 def verdict_youzi(s, q, f, yld, yz, st, mood, late):
     """游资仓最终买点。和总判同一套闸，表一看这一列就能下结论。
-    换手/量比改用时段归一值：10:00 的 5% 换手按全天折算才和 14:30 的 5% 可比。"""
+    换手/量比改用时段归一值：10:00 的 5% 换手按全天折算才和 14:30 的 5% 可比。
+    今涨 0.70 板幅改为观察等回踩，只有见顶/涨停才硬不追。
+    退潮不关死：门槛抬到 75，且只做低位、不追热。"""
     how = (yz or {}).get("how") or ""
     sc = (yz or {}).get("score") or 0
     if yday_dt_shape(q, yld) == "trap":
         return "不买", "昨跌停骗炮"
     oh = overheat(s["code"], q["chg"], q.get("name"))
-    if oh in ("涨停", "见顶", "不追"):
+    if oh in ("涨停", "见顶"):
         return "不追", f"今涨{q['chg']:+.1f}% {oh}，不追"
     if limit_open_dump(s, q):
         return "不买", "竞价涨停开后砸盘，出货不做"
-    if mood.get("phase") == "退潮":
-        return "观察", "情绪退潮"
     if any(k in how for k in SKIP_HOW):
         return "不买", how
-    if sc < 65:
-        return hysteresis(s["code"], "观察", f"7a {sc:.0f}未达标", sc, 65, 60)
     if st == "回避":
         return "观察", "主线回避"
+    if late:
+        return "观察", "尾盘/收盘后不新开"
+    need = youzi_enter_need(yz, mood)
+    hold = need - 5
+    if sc < need:
+        miss = "；资金数据缺" if (yz or {}).get("flow_miss") else ""
+        tide = "；情绪退潮抬门槛" if (mood or {}).get("phase") == "退潮" else ""
+        return hysteresis(s["code"], "观察", f"7a {sc:.0f}未达标(门槛{need:.0f}){miss}{tide}", sc, need, hold)
+    if (mood or {}).get("phase") == "退潮":
+        dd = (f or {}).get("dd")
+        if oh in ("偏热", "不追"):
+            return "观察", "情绪退潮不追热"
+        if dd is not None and dd > -0.12:
+            return "观察", "情绪退潮只做低位转强"
+    if oh == "不追":
+        return "观察", f"今涨{q['chg']:+.1f}% 过热，等回踩不追尖"
     hs_raw = q.get("turnover")
     hs = hs_proj(hs_raw)
     vr = vr_norm(q.get("vol_ratio") or 0)
-    # 折算值要过 5%，同时已成交的换手本身不能太小，否则等于拿开盘几分钟的噪声开仓
     hs_ok = hs is not None and hs >= 5 and (hs_raw or 0) >= 1.0
     if not (hs_ok or vr >= 1.5):
         if hs is not None:
             return "观察", f"换手/量比不够（现换手{hs_raw:.1f}%、全天折算{hs:.1f}%、归一量比{vr:.2f}）"
         return "观察", "换手/量比不够"
-    if late:
-        return "观察", "尾盘/收盘后不新开"
-    return hysteresis(s["code"], "可小仓", how, sc, 65, 60)
+    return hysteresis(s["code"], "可小仓", how, sc, need, hold)
 
 
 def limit_price(prev, code, name=None):
@@ -3728,10 +3790,8 @@ def limit_price(prev, code, name=None):
 
 def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False,
                zt_y=None, zt_t=None):
-    """近7日打板战法。游资习惯：主线+换手板+一进二/弱转强，不打今涨停、一字、退潮、回避。
-    本轮改动：昨板质量（封单额/封成比/开板次数/是否一字）从东财涨停池取真值，
-    一进二不再只看「昨涨停+今高开」；龙回头要求真的是板内龙头且缩量回踩均线；
-    弱转强要求昨天确实是烂板/炸板/断板。不改 7 因子公式；游资仓仍要 7a≥65。"""
+    """近7日打板战法。今首板默认不追；能买的只有昨首板一进二、昨烂板弱转强、龙头断板回踩。
+    二进三及以上只盯不打。游资仓仍要 7a 过门槛；打板可小仓不要求 7a。"""
     empty = {
         "in_pool": False, "score": 0, "setup": "非打板池", "call": "观察",
         "why": "近7日无涨停", "bits": [], "n7": 0, "n_lian": 0,
@@ -3994,7 +4054,10 @@ def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False,
     elif setup == "龙回头" and score >= 80:
         call, why = "可小仓", "板内龙头缩量回踩均线转强，轻仓试，破今日低走"
     else:
-        why = "；".join(bits[:4]) or why
+        if setup in ("二进三", "高位板回抽"):
+            why = "二进三及以上只盯不打；" + ("；".join(bits[:3]) or "高度风险")
+        else:
+            why = "；".join(bits[:4]) or why
     if call == "可小仓":
         call, why = hysteresis(s["code"] + ":db", call, why, score, 75, 70)
 
@@ -4251,10 +4314,12 @@ def trade_exits(s, q, f, kind="游资", setup="", hist=None):
         "txt": f"{tag} 止损{sl_s}（{lab}） 止盈{tp_s}（{tp1_lab}/{tp2_lab}） 盈亏比{rr:.1f} · {tp_note}",
     }
 
-def verdict_etf(q, yz):
+def verdict_etf(q, yz, st="-"):
     how = (yz or {}).get("how") or ""
     sc = (yz or {}).get("score") or 0
     if "可小仓" in how and sc >= 60 and q["chg"] < 5:
+        if st == "回避":
+            return "观察", "主线回避"
         return "可小仓", how
     if sc >= 50:
         return "观察", how or "ETF观察"
@@ -4341,7 +4406,7 @@ def heat_pts_of(st, line, heat_map):
     if st == "可做":
         pts = 22 + clip(amt / 4.0, 0, 12)
     elif st == "中性":
-        pts = 8 + clip(amt / 6.0, 0, 6)
+        pts = (8 + clip(amt / 6.0, 0, 6)) if h else 0
     else:
         pts = clip(amt / 8.0, -8, 0)
     tag = f"{line}/{st}"
@@ -4667,8 +4732,8 @@ def analyze_one(code, board="自选", kind_hint=""):
         flows = stock_flow([s])
     except Exception:
         flows = {}
-    flow = flows.get(code) or {}
-    ran("个股资金", bool(flow))
+    flow = flows.get(code)
+    ran("个股资金", stock_flow_ok(flow), "缺" if not stock_flow_ok(flow) else "")
     bench = {}
     for c, m in (("000001", "sh"), ("399006", "sz")):
         try:
@@ -4738,10 +4803,11 @@ def analyze_one(code, board="自选", kind_hint=""):
     board_heat = {b: (up, n_b)}
     ran("板块同向", n_b > 0, f"{up}/{n_b}只同向")
     yz = youzi_score(s, q, fac, yld, flow, inn_lines, out_lines, board_heat, hist) if q else {}
-    kind = "ETF" if is_etf else stock_kind(s, q, hist)
+    kind = "ETF" if is_etf else session_kind(code, stock_kind(s, q, hist))
+    GATE_NOW.setdefault(code, {})["kind"] = kind
     st, line = line_status_of(s, doable, avoid)
     if is_etf:
-        call, why = verdict_etf(q, yz)
+        call, why = verdict_etf(q, yz, st)
         kind = "ETF"
         tape = (yz or {}).get("score") or 0
         tape_txt = f"ETF {tape:.0f}"
@@ -4752,7 +4818,7 @@ def analyze_one(code, board="自选", kind_hint=""):
         tape_txt = f"7a {tape:.0f}"
         gate_name = "游资闸"
     else:
-        call, why = verdict_trend(s, q, fac, yld, st)
+        call, why = verdict_trend(s, q, fac, yld, st, mood)
         kind = "趋势"
         tape = (fac or {}).get("entry") or 0
         tape_txt = f"买点{tape:.0f}"
@@ -4894,6 +4960,9 @@ def main():
             etf_lines.append(f"{e['name']} {q['px']:.3f} {q['chg']:+.2f}%")
 
     inn, outf = sector_flow()
+    sector_flow_ok = bool(inn or outf)
+    if not sector_flow_ok:
+        _note_fail("板块资金")
     etf_items = []
     for e in etfs:
         ee = dict(e)
@@ -4901,6 +4970,9 @@ def main():
         ee.setdefault("board", "ETF")
         etf_items.append(ee)
     flows = stock_flow(stocks + etf_items)
+    n_flow = sum(1 for x in stocks if stock_flow_ok(flows.get(x["code"])))
+    if stocks and n_flow < max(3, int(len(stocks) * 0.4)):
+        _note_fail("个股资金")
     try:
         ovn_scan = overnight_scan(stocks, etfs)
     except Exception:
@@ -5345,6 +5417,8 @@ def main():
     line_block = []
     if doable:
         line_block.append("可做：" + "、".join(doable))
+    elif not sector_flow_ok:
+        line_block.append("可做：资金数据暂缺，本轮不作数（不把缺数据当成中性放行）")
     else:
         line_block.append("可做：无（资金主线与自选科技链劈叉或未确认）")
     if inn_lines:
@@ -5367,7 +5441,8 @@ def main():
     for s, q, f, yld, hist in rows:
         if not q:
             continue
-        kind = stock_kind(s, q, hist)
+        kind = session_kind(s["code"], stock_kind(s, q, hist))
+        GATE_NOW.setdefault(s["code"], {})["kind"] = kind
         st, line = line_status_of(s)
         yz = yz_by_code.get(s["code"])
         db = daban_plan(s, q, f, hist, yz, st, line, mood, late_youzi, yld, zt_y, zt_t)
@@ -5376,7 +5451,7 @@ def main():
         if kind == "游资":
             call, why = verdict_youzi(s, q, f, yld, yz, st, mood, late_youzi)
         else:
-            call, why = verdict_trend(s, q, f, yld, st)
+            call, why = verdict_trend(s, q, f, yld, st, mood)
         if db.get("call") == "可小仓" and call != "可小仓" and call not in ("不买", "不追"):
             call, why, kind = db["call"], db["why"], "打板"
         elif db.get("call") == "可小仓" and call == "可小仓":
@@ -5384,15 +5459,16 @@ def main():
             kind = "打板"
         verdicts[s["code"]] = (call, why, kind, line, st)
     for s, q, f, yld, yz in etf_yz:
-        call, why = verdict_etf(q, yz)
-        verdicts[s["code"]] = (call, why, "ETF", "ETF", "-")
+        st, line = line_status_of(s)
+        call, why = verdict_etf(q, yz, st)
+        verdicts[s["code"]] = (call, why, "ETF", line, st)
 
     t1_all, n_trend, n_youzi = [], 0, 0
     call_rank = {"可小仓": 0, "观察": 1, "不追": 2, "不买": 3}
     for s, q, f, yld, hist in rows:
         if not q:
             continue
-        kind = stock_kind(s, q, hist)
+        kind = session_kind(s["code"], stock_kind(s, q, hist))
         if kind == "游资":
             n_youzi += 1
         elif kind == "趋势":
@@ -5410,8 +5486,9 @@ def main():
     trend_ok, trend_no = [], []
     for s, q, f, yld in ranked:
         call, why, kind, line, st = verdicts.get(s["code"], ("观察", "", "趋势", "", ""))
-        if is_limit_up(s["code"], q["chg"]) or q["chg"] >= 7:
-            trend_no.append(f"{s['name']} 硬剔除/过热")
+        oh = overheat(s["code"], q["chg"], q.get("name"))
+        if is_limit_up(s["code"], q["chg"], q.get("name")) or oh in ("涨停", "见顶"):
+            trend_no.append(f"{s['name']} 今涨停/见顶不追")
             continue
         if call == "可小仓" and kind != "打板":
             trend_ok.append((s["name"], q["px"], q["chg"], f["buy"], line, st, why, f.get("entry") or 0))
@@ -5419,14 +5496,14 @@ def main():
             trend_no.append(f"{s['name']} 表一可小仓但主线回避")
     youzi_ok, youzi_no = [], []
     if mood.get("phase") == "退潮":
-        youzi_no.append("情绪退潮，7a高分也不开游资新仓")
+        youzi_no.append("情绪退潮：打板空仓；游资门槛7a≥75且只做低位，不一律关死")
     for s, q, f, yld, yz in yz_youzi:
         call, why, kind, line, st = verdicts.get(s["code"], ("观察", "", "游资", "", ""))
-        if kind == "打板":
+        if kind != "游资":
             continue
         if call == "可小仓":
             youzi_ok.append((s["name"], q["px"], q["chg"], yz["score"], line, st, why))
-        elif yz["score"] >= 65 and call != "不追":
+        elif yz["score"] >= youzi_enter_need(yz, mood) and call != "不追":
             youzi_no.append(f"{s['name']} 7a {yz['score']:.0f}分 {why}")
     if late_youzi:
         youzi_no.append(
@@ -5435,7 +5512,8 @@ def main():
         )
     etf_ok = []
     for s, q, f, yld, yz in etf_yz:
-        call, why = verdict_etf(q, yz)
+        v = verdicts.get(s["code"])
+        call, why = (v[0], v[1]) if v else verdict_etf(q, yz)
         if call == "可小仓":
             etf_ok.append((s["name"], q["px"], q["chg"], yz["score"], why))
     left_ok = [x[0]["name"] + " " + x[4]["call"] for x in left_ranked if x[4]["call"] == "可试仓"]
@@ -5500,7 +5578,16 @@ def main():
     buy_bits.extend(x[0] for x in daban_ok)
     buy_bits.extend(x[0] for x in youzi_ok if x[0] not in buy_bits)
     buy_bits.extend(x[0] for x in etf_ok)
-    buy_line = "、".join(buy_bits) if buy_bits else "没有。不开新仓"
+    buy_parts = []
+    if trend_ok:
+        buy_parts.append("趋势 " + "、".join(x[0] for x in trend_ok))
+    if daban_ok:
+        buy_parts.append("打板 " + "、".join(x[0] for x in daban_ok))
+    if youzi_ok:
+        buy_parts.append("游资 " + "、".join(x[0] for x in youzi_ok))
+    if etf_ok:
+        buy_parts.append("ETF " + "、".join(x[0] for x in etf_ok))
+    buy_line = "；".join(buy_parts) if buy_parts else "没有。不开新仓"
     # 左侧可试仓本来就在第0节表里列着，却不进「可以买」，两处对不上。
     # 现在单列出来，标清是轻仓试不是过闸。
     left_names = [x.split()[0] for x in left_ok]
@@ -5688,6 +5775,27 @@ def main():
         lines.append(f"| 左侧 | {nm} | - | - | **可试仓** | 超跌 | 轻仓，不替代右侧；失败=破今日低 | {sl} | {tp} |")
     if not n0:
         lines.append("| - | 没有 | - | - | **不买** | - | 不开新仓 | - | - |")
+    lines.append("### 0b 打板（今首板不追，昨板接力才看）")
+    lines.append("- 今天刚封的**首板默认不追**。能买的只有：昨首板今天冲二（一进二）、昨烂板弱转强、龙头断板回踩（龙回头）。二进三及以上只盯不打。")
+    lines.append("- 看哪里：本表上面「打板」行；第9节打板排名里「打板闸=可小仓」；首页「能不能买」里带「打板」的名字。")
+    if daban_ok:
+        lines.append("- **本轮打板可小仓：** " + "、".join(
+            f"{x[0]}({(daban_by_code.get(x[7]) or {}).get('setup') or '打板'})" for x in daban_ok
+        ))
+    else:
+        lines.append("- **本轮打板可小仓：没有。**")
+    daban_watch = []
+    for code, db in sorted(daban_by_code.items(), key=lambda kv: -kv[1].get("score", 0)):
+        if db.get("call") == "可小仓":
+            continue
+        row = next((x for x in rows if x[0]["code"] == code), None)
+        if not row or not row[1]:
+            continue
+        daban_watch.append(f"{row[0]['name']} {db.get('setup') or '-'} {db.get('call')} {db.get('score', 0):.0f}分")
+        if len(daban_watch) >= 8:
+            break
+    if daban_watch:
+        lines.append("- 在池未过闸：" + "；".join(daban_watch))
     lines.append("- 止盈止损叠四套主流方法，只取有效位：结构（今低/昨低/10日低）、均线（游资MA5/10，趋势MA20）、ATR吊灯（近高往下2～2.2倍ATR）、固定风险（主板大约4.5%～6%）。贴身均价/均线离开不够远不当止损。止盈先看昨高、10日高（至少约1.5～2倍风险），再看20日高或涨停。距涨停不足2.5个点不设碎止盈。估算不是下单。观察票只是预案。")
     lines.append("### 今日最值得买 TOP5（按值分；过闸优先，均线分只作轻量参考）")
     lines.append("| 序 | 股票 | 仓 | 价 | 今涨 | 买点 | 竞价 | 主线热度 | 盘面 | 值分 | 角色 | 止损 | 止盈 | 为什么 |")
@@ -5838,8 +5946,8 @@ def main():
     lines.append("- 能不能买以第0节「可以买/买点」为准。TOP5只是可小仓里按值分谁更靠前，值分高不能推翻闸，也不能把出货票洗白。")
     lines.append("- 可以买=总闸过了才能开仓。TOP5只排可小仓（按值分）；观察/可试仓再热也只进备选池，不把TOP5凑满。值分：闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价。均线分只拉开能买里谁更稳，不能翻盘。")
     lines.append("- 值分去重：游资/打板/ETF 的盘面分里已含板块资金和竞价质量，值分里主线热度只按0.45计、竞价不再重复加（竞价列显示0即此意，判别仍照常用）；趋势用买点分，不含这两项，全额计。")
-    lines.append("- 判别加了滞后带：刚过线（如7a 65～70）要连续两次达标才给可小仓；已在可小仓的，分数回落到60以上仍维持。降级、骗炮、回避、退潮立即生效，不等确认。")
-    lines.append("- 打板仓（近7日涨停池）：只做一进二/弱转强/板内龙头回头。昨板质量取东财涨停池真值（封单额/封成比/开板次数/是否一字），昨一字板不打、昨烂板才算弱转强、龙回头必须是板内前列且缩量回踩均线。昨板今日整体亏钱（赚钱效应差）时打板不新开。打板分≥75才可小仓，不替代7a游资闸。")
+    lines.append("- 判别加了滞后带：刚过线要连续两次达标才给可小仓。降级、骗炮、回避立即生效。情绪退潮：打板空仓，游资抬门槛只做低位，趋势不追热，不再一刀切关掉游资。")
+    lines.append("- 打板仓：今首板不追。只做昨首板一进二、昨烂板弱转强、板内龙头回头。昨一字不打。赚钱效应差或情绪退潮时打板不新开。打板可小仓不要求 7a。")
     lines.append("- 竞价涨停/近板开后砸盘→不买（出货）。竞价质量已并入各战法盘面分；量比和换手都按时段归一（早盘成交前置，10:00的量比1.5不等于14:30的1.5）。")
     lines.append("- 表一看「买点」列：可小仓=能买，观察=盯着，不买/不追=不能买。分只是均线健康。")
     miss_q = [x["name"] for x in stocks + etfs if not live.get(x["code"])]
@@ -6222,7 +6330,7 @@ def main():
     lines.append("- 不追：" + ("，".join(hot) if hot else "暂无+7%以上"))
     lines.append("- 昨跌停：" + ("，".join(ylds) + "（骗炮才不买，弱转强不一刀切）" if ylds else "无"))
     lines.append("### 近7日打板排名（专用战法，按打板分）")
-    lines.append("- 因子：昨板质量（东财涨停池：封单额/封成比/开板次数/是否一字）、题材助攻、主线、市值20-80亿、换手8-22%、竞价3-7%且站住开盘、竞价量比、连板高度与市场最高板的距离、昨板今日赚钱效应、主力同向、情绪分档。今涨停仍不追；昨一字板不打。")
+    lines.append("- 因子：昨板质量、题材、主线、市值、换手、竞价3-7%站住开盘、连板高度、昨板赚钱效应。**今首板不追**；昨一字不打；二进三只盯。")
     lines.append("| 打板序 | 股票 | 战法 | 打板分 | 打板闸 | 总买点 | 近7日涨停 | 连板 | 今涨 | 说明 |")
     lines.append("|---|---|---|---|---|---|---|---|---|---|")
     ranked_db = sorted(daban_by_code.items(), key=lambda kv: -kv[1].get("score", 0))
@@ -6311,7 +6419,7 @@ def main():
     if not n_buy_rows:
         lines.append("| - | 没有同时满足分层条件的票 | - | - | - | - | 表一可小仓+主线未回避；或打板分≥75一进二/弱转强；或7a≥65；或表三可试仓 | - | **不买** | - | - |")
     lines.append("")
-    lines.append("总判规则：趋势=表一可小仓且主线不是回避（同主线按买点分优先）；打板=近7日涨停池、一进二或弱转强、打板分≥75、未今涨停/未骗炮/未回避/非退潮；游资=7a≥65、未涨停/未骗炮、主线不是回避、情绪非退潮、换手≥5%或量比≥1.5；ETF=表一ETF对照、7因子可小仓且分≥60涨幅<5%；左侧=表三可试仓（轻仓）。最适合买：趋势可小仓 > 打板达标 > 游资达标 > ETF > 左侧。值分含均线分×0.18作参考，不替代闸。昨跌停看骗炮/弱转强，今涨停不追。止盈止损参考均线、前高、ATR吊灯和固定风险，不设不到1个点的碎止盈。估算不是下单。")
+    lines.append("总判规则：趋势=表一可小仓且主线不是回避；打板=今首板不追，昨首板一进二/弱转强/龙回头才可能可小仓；游资=7a过门槛（资金缺72/退潮75，平时65）、未涨停见顶、主线不是回避；ETF同主线回避也降观察；左侧=轻仓试。最适合买：趋势 > 打板 > 游资 > ETF > 左侧。今涨停不追。昨跌停骗炮才不买，弱转强放宽为低开翻红站住均价。")
     if trend_let:
         lines.append("- 同主线趋势让出：" + "、".join(x[0] for x in trend_let))
     if youzi_let:
@@ -6325,7 +6433,7 @@ def main():
         lines.append("- 游资仓：7a前排过热或不到分，不新开")
     lines.append("- 趋势仓：只看表一趋势池可小仓；游资不进表一买点，也不把7因子/回踩/斜率加进均线分")
     if mood.get("phase") == "退潮":
-        lines.append("- 游资仓：情绪退潮，表二 7 因子高分也只看不追（分本身不改）")
+        lines.append("- 游资仓：情绪退潮，门槛抬到7a≥75且只做低位转强，不一律空仓；打板仍空仓")
     elif mood.get("phase") == "高潮":
         lines.append("- 游资仓：情绪高潮，可看跟风，仍不追高标；7因子分不改")
     if idx_weak_why:
@@ -6368,6 +6476,7 @@ def main():
         "watch": watch,
         "small_on_line": small_on_line,
         "buy_names": buy_bits,
+        "buy_line": buy_line,
         "top5": [{"name": x["name"], "role": x["role"], "score": round(x["score"], 1), "heat": x["heat"],
                   "sl": (exits_by_name.get(x["name"]) or {}).get("sl"),
                   "tp": (lambda e: f"{e['tp1']}/{e['tp2']}" if e else None)(exits_by_name.get(x["name"]))} for x in top5],

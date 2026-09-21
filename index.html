@@ -201,7 +201,6 @@
           <p class="eyebrow">今日自选 · 北京</p>
           <h1 id="title">今日自选</h1>
           <p class="clock" id="clock">—</p>
-          <p class="meta" id="meta">正在加载…</p>
         </div>
         <div class="head-right">
           <div class="ovn-news" id="ovn-news"></div>
@@ -468,8 +467,6 @@
       const t = d.time || d.time_iso || "";
       const clockEl = document.getElementById("clock");
       if (clockEl) clockEl.textContent = fmtBj(t);
-      const clk = d.buy_clock || {};
-      document.getElementById("meta").textContent = (clk.action ? ("下手：" + clk.slot + " " + clk.action + " · ") : "") + "先看第0节「今日必买」 · 大盘是本轮快照当时价";
       paintIdxTape(d);
       const top5 = (d.top5 || []).map(x => x.name).join("、") || "—";
       const avoidBits = (d.avoid_detail || []).length
@@ -557,7 +554,8 @@
         if (!r.ok) return;
         applySnap(await r.json());
       } catch (e) {
-        document.getElementById("meta").textContent = "latest.json 暂不可用，下方仍展示已生成的 HTML 报告";
+        const hint = document.getElementById("scan-hint");
+        if (hint) hint.textContent = "latest.json 暂不可用，下方仍展示已生成的 HTML 报告";
       }
     }
     refreshLatest();

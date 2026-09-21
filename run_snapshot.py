@@ -440,7 +440,7 @@ def overnight_meal_save(date_s, picks, now):
 
 
 def style_books():
-    """三仓买卖钟。按A股短线常见高胜率做法，不是席位T+0。"""
+    """四仓买卖钟。按A股短线常见高胜率做法，不是席位T+0。尾盘打板=隔夜套利，单独一仓。"""
     return [
         {
             "kind": "游资",
@@ -463,72 +463,110 @@ def style_books():
             "sell": "次日不封/开板 09:30–09:45 走；冲高不封 09:35–10:00 卖；续板一字可留",
             "hold": "未晋级不隔第二夜。封死才看到下一板",
         },
+        {
+            "kind": "尾盘打板",
+            "buy": "14:40–14:55 主买（第1节可尾盘：隔夜强势或尾盘二板）。14:30–14:40只看盘，14:57不追",
+            "skip": "14:00–14:30假拉、尾盘首板偷鸡、14:57收盘集合、未过第1节闸",
+            "sell": "次日 09:31–09:50 冲高卖（约+3%走）；低开/开板 09:30–09:35 先走（约-2%）；最晚 10:00 清完。竞价可挂",
+            "hold": "只隔一夜。一字涨停可暂留，其余不隔第二夜。这是散户合法隔夜套利，不进第0节可以买",
+        },
     ]
 
 
 def style_now_action(now=None):
-    """这一分钟：三仓是该买、该卖旧仓，还是空仓。"""
+    """这一分钟：四仓是该买、该卖旧仓，还是空仓。尾盘打板买卖窗跟游资反着。"""
     now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     hm = now.strftime("%H:%M")
-    off = {"youzi_buy": "不买", "youzi_sell": "不卖新仓",
-           "trend_buy": "不买", "trend_sell": "不赶着卖",
-           "daban_buy": "不买", "daban_sell": "不卖新仓"}
+    off = {
+        "youzi_buy": "不买", "youzi_sell": "不卖新仓",
+        "trend_buy": "不买", "trend_sell": "不赶着卖",
+        "daban_buy": "不买", "daban_sell": "不卖新仓",
+        "meal_buy": "不买", "meal_sell": "不卖新仓",
+    }
     if now.weekday() >= 5 or hm < "09:15" or hm >= "15:00":
-        return {**off, "youzi_sell": "等下一开盘", "trend_sell": "等下一开盘", "daban_sell": "等下一开盘"}
+        return {
+            **off,
+            "youzi_sell": "等下一开盘", "trend_sell": "等下一开盘",
+            "daban_sell": "等下一开盘",
+            "meal_buy": "等下一尾盘", "meal_sell": "等下一开盘",
+        }
     if "09:15" <= hm < "09:30":
         return {
             "youzi_buy": "不买，看竞价", "youzi_sell": "昨仓可挂卖",
             "trend_buy": "不买", "trend_sell": "昨仓可挂，高开不必砸",
             "daban_buy": "看封单，不下手", "daban_sell": "昨板今低开/开板：竞价先挂",
+            "meal_buy": "不买", "meal_sell": "昨仓竞价可挂（一字涨停留）",
         }
     if "09:30" <= hm < "09:35":
         return {
             "youzi_buy": "等3分钟", "youzi_sell": "昨仓低开先走，高开再等",
             "trend_buy": "等3分钟", "trend_sell": "低开砸到止损才走，高开别第一秒卖",
             "daban_buy": "等3分钟看炸板", "daban_sell": "开板立刻走；高开封死先留",
+            "meal_buy": "不买", "meal_sell": "低开/开板先走；高开等冲",
         }
     if "09:35" <= hm < "10:00":
         return {
             "youzi_buy": "主买点", "youzi_sell": "昨仓主卖点（冲高走）",
             "trend_buy": "确认均价后可买", "trend_sell": "昨仓冲高可减一截",
             "daban_buy": "一进二/弱转强主买点", "daban_sell": "不封就卖，封死再留",
+            "meal_buy": "不买", "meal_sell": "主卖点（冲高约+3%走，最晚10:00）",
         }
     if "10:00" <= hm < "10:30":
         return {
             "youzi_buy": "回踩补一次", "youzi_sell": "昨仓最晚清完",
             "trend_buy": "主买点（回踩）", "trend_sell": "没到止盈止损就拿着",
             "daban_buy": "未封死不追", "daban_sell": "还没走的昨板，这会儿清",
+            "meal_buy": "等到14:30", "meal_sell": "已过卖窗，残仓按止损清",
         }
     if "10:30" <= hm < "11:30":
         return {
             "youzi_buy": "原则上不新开", "youzi_sell": "旧仓能出就出",
             "trend_buy": "回踩均线仍可买", "trend_sell": "破位才走",
             "daban_buy": "高位不追", "daban_sell": "未晋级的应已走掉",
+            "meal_buy": "等到14:30", "meal_sell": "已过卖窗",
         }
     if "11:30" <= hm < "13:00":
-        return {**off, "youzi_buy": "停", "trend_buy": "停", "daban_buy": "停"}
+        return {**off, "youzi_buy": "停", "trend_buy": "停", "daban_buy": "停", "meal_buy": "停"}
     if "13:00" <= hm < "13:30":
         return {
             "youzi_buy": "资金回流才跟，否则空", "youzi_sell": "旧仓下午弱就出",
             "trend_buy": "第二买点（回流确认）", "trend_sell": "主线还在就拿",
             "daban_buy": "回流才看，不追高", "daban_sell": "开板的不要拖到尾盘",
+            "meal_buy": "等到14:30", "meal_sell": "已过卖窗",
         }
     if "13:30" <= hm < "14:00":
         return {
             "youzi_buy": "不新开", "youzi_sell": "旧仓弱则出",
             "trend_buy": "过闸仍可买", "trend_sell": "主线还在就拿",
             "daban_buy": "不新开", "daban_sell": "残仓清掉",
+            "meal_buy": "等到14:30", "meal_sell": "已过卖窗",
         }
     if "14:00" <= hm < "14:30":
         return {
             "youzi_buy": "原则上不新开（胜率差）", "youzi_sell": "旧仓 14:00 前尽量出完",
             "trend_buy": "不追新高，回踩才看", "trend_sell": "主线净出则准备次日清",
             "daban_buy": "不新开，改看尾盘打板", "daban_sell": "残仓清掉",
+            "meal_buy": "等到14:30看盘，现在是假拉高发", "meal_sell": "今天还没买",
+        }
+    if "14:30" <= hm < "14:40":
+        return {
+            "youzi_buy": "不新开", "youzi_sell": "今天新买的不能卖",
+            "trend_buy": "不追新高", "trend_sell": "不因尾盘情绪乱出",
+            "daban_buy": "不新开", "daban_sell": "今天新买的不能卖",
+            "meal_buy": "看盘确认，不抢14:30假拉", "meal_sell": "今天新买的不能卖",
+        }
+    if "14:40" <= hm < "14:57":
+        return {
+            "youzi_buy": "不新开", "youzi_sell": "今天新买的不能卖",
+            "trend_buy": "不追新高", "trend_sell": "不因尾盘情绪乱出",
+            "daban_buy": "不新开", "daban_sell": "今天新买的不能卖",
+            "meal_buy": "主买点（第1节可尾盘才下）", "meal_sell": "今天新买的不能卖",
         }
     return {
         "youzi_buy": "不新开", "youzi_sell": "今天新买的不能卖",
         "trend_buy": "不追新高", "trend_sell": "不因尾盘情绪乱出",
         "daban_buy": "不新开", "daban_sell": "今天新买的不能卖",
+        "meal_buy": "不追收盘集合", "meal_sell": "今天新买的不能卖",
     }
 
 
@@ -544,17 +582,18 @@ def buy_clock(now=None):
         "尾盘打板才是散户合法的隔夜套利：尾盘买、次日早盘卖，单独看第1节，不进第0节可以买。"
     )
     table = [
-        ("09:15-09:25", "集合竞价", "只看开板/骗炮，集合竞价不下手"),
+        ("09:15-09:25", "集合竞价", "只看开板/骗炮，不下手。尾盘打板昨仓可挂卖，一字涨停不卖"),
         ("09:25-09:30", "竞价结果", "确认炸板/骗炮，仍不追"),
-        ("09:30-09:35", "开盘三分钟", "等方向，不追飞刀"),
-        ("09:35-10:00", "游资黄金买点", "过闸+均价上+主线在→下手。散户版「上午买」"),
-        ("10:00-10:30", "回踩确认", "10:30再刷；均价/主线还在就补买"),
+        ("09:30-09:35", "开盘三分钟", "等方向，不追飞刀。尾盘打板低开先走，高开等冲"),
+        ("09:35-10:00", "游资黄金买点", "过闸+均价上+主线在→下手。尾盘打板主卖点（冲高约+3%）"),
+        ("10:00-10:30", "回踩确认", "10:30再刷；均价/主线还在就补买。尾盘打板10:00前必须清完"),
         ("10:30-11:30", "上午后半", "趋势回踩均线/均价；游资弹性变差，过闸仍可跟"),
         ("11:30-13:00", "午休", "不交易"),
         ("13:00-13:30", "午后确认", "趋势第二窗口；游资看资金有没有回流"),
         ("13:30-14:00", "午后中段", "趋势可买；游资谨慎"),
-        ("14:00-14:30", "游资最后窗口", "过闸才买，14:30截止"),
-        ("14:30-14:55", "尾盘打板", "游资/打板空仓；14:40–14:55确认后买，14:57不追"),
+        ("14:00-14:30", "游资最后窗口", "过闸才买，14:30截止。尾盘打板还等，这段假拉多"),
+        ("14:30-14:40", "尾盘观察", "游资空仓。隔夜套利先看封死/均价，不抢14:30假拉"),
+        ("14:40-14:55", "尾盘打板主买", "第1节可尾盘才买；14:40后更稳，14:57不追"),
         ("14:57-15:00", "收盘集合", "不追脉冲"),
     ]
     empty = {
@@ -574,23 +613,23 @@ def buy_clock(now=None):
     if "09:15" <= hm < "09:30":
         return {
             **empty, "slot": "09:15-09:30", "name": "集合竞价",
-            "action": "只看开板/骗炮，集合竞价不下手",
+            "action": "只看开板/骗炮，集合竞价不下手。尾盘打板昨仓可挂卖",
             "youzi": "看盘", "trend": "看盘", "daban": "看封单",
             "meal": "卖尾盘打板（竞价可挂）",
         }
     if "09:30" <= hm < "09:35":
         return {
             **empty, "slot": "09:30-09:35", "name": "开盘三分钟",
-            "action": "等方向，不追飞刀",
+            "action": "等方向，不追飞刀。尾盘打板低开先走，高开等冲",
             "youzi": "等3分钟", "trend": "等3分钟", "daban": "等3分钟看炸板",
-            "meal": "冲高先卖",
+            "meal": "冲高先卖 / 低开先走",
         }
     if "09:35" <= hm < "10:00":
         return {
             **empty, "slot": "09:35-10:00", "name": "游资黄金买点",
-            "action": "过闸+均价上+主线在→下手。这是散户跟游资「上午买」的正时间",
+            "action": "过闸+均价上+主线在→下手。尾盘打板这会儿是主卖点，不是买点",
             "youzi": "主买点", "trend": "可买（确认均价）", "daban": "一进二主买点",
-            "meal": "10:00前必须卖完",
+            "meal": "主卖点，10:00前必须卖完",
         }
     if "10:00" <= hm < "10:30":
         return {
@@ -629,16 +668,23 @@ def buy_clock(now=None):
     if "14:00" <= hm < "14:30":
         return {
             **empty, "slot": "14:00-14:30", "name": "游资最后窗口",
-            "action": "过闸才买，14:30截止。这是散户跟游资「下午还在」的最后买点，不是下午卖",
+            "action": "过闸才买，14:30截止。尾盘打板还等，这段假拉多、胜率差",
             "youzi": "最后买点", "trend": "可买", "daban": "14:30前最后看",
-            "meal": "等到14:30",
+            "meal": "等到14:30看盘",
         }
-    if "14:30" <= hm < "14:57":
+    if "14:30" <= hm < "14:40":
         return {
-            **empty, "slot": "14:30-14:55", "name": "尾盘打板",
-            "action": "游资/打板不新开。尾盘打板14:40–14:55确认后买，14:57不追",
+            **empty, "slot": "14:30-14:40", "name": "尾盘观察",
+            "action": "游资/打板不新开。尾盘打板先看封死、均价、资金还在，不抢14:30假拉",
             "youzi": "不新开", "trend": "可买但不追新高", "daban": "不新开，改看第1节",
-            "meal": "真开仓（14:40后更稳）",
+            "meal": "看盘确认，14:40后再下",
+        }
+    if "14:40" <= hm < "14:57":
+        return {
+            **empty, "slot": "14:40-14:55", "name": "尾盘打板主买",
+            "action": "游资/打板不新开。尾盘打板主买点：第1节可尾盘才下，14:57不追",
+            "youzi": "不新开", "trend": "可买但不追新高", "daban": "不新开，改看第1节",
+            "meal": "真开仓（主买点）",
         }
     return {
         **empty, "slot": "14:57-15:00", "name": "收盘集合",
@@ -7064,8 +7110,8 @@ def main():
     # ---- 1 尾盘打板（独立仓） ----
     lines.append("## 1 尾盘打板（尾盘买、次日早盘卖；不进第0节可以买）")
     lines.append(
-        "跟游资/打板/趋势分开。游资14:30后不新开；尾盘打板反过来，只在 **14:30–14:55** 新开。"
-        "核心：尾盘确认资金还在、不追尾盘偷鸡首板、次日 **09:30–10:00 必须了结**。"
+        "跟游资/打板/趋势分开。游资14:30后不新开；尾盘打板反过来，闸窗 **14:30–14:57**，买点钟主买 **14:40–14:55**（14:30先看盘）。"
+        "核心：尾盘确认资金还在、不追尾盘偷鸡首板、次日 **09:31–09:50 冲高卖、10:00前了结**。"
         "两路：①隔夜强势=今涨3%～5%（20cm到8%）、未涨停、量比≥1.2、换手5%～10%、流通50～200亿、均价上方、贴近当日高；"
         "②尾盘二板=昨首板今封死、换手8%～18%、不是烂板/跳水、贴主线。"
         "ST/科创/北交所/主线回避/退潮/骗炮不做。14:57后不追脉冲。"
@@ -7482,7 +7528,7 @@ def main():
         lines.append(f"- {r}")
     lines.append("- 不代下单、不要账号。")
     lines.append("")
-    lines.append("## 14 买点钟（09:30–14:30 不是随时买）")
+    lines.append("## 14 买点钟（游资/趋势/打板/尾盘打板各有窗口）")
     lines.append(
         f"**现在：{clk['slot']}　{clk['name']}。{clk['action']}**"
     )
@@ -7493,7 +7539,8 @@ def main():
     lines.append(
         f"- 现在买卖：游资买 {now_act['youzi_buy']} / 卖旧仓 {now_act['youzi_sell']}；"
         f"趋势买 {now_act['trend_buy']} / 卖 {now_act['trend_sell']}；"
-        f"打板买 {now_act['daban_buy']} / 卖旧仓 {now_act['daban_sell']}"
+        f"打板买 {now_act['daban_buy']} / 卖旧仓 {now_act['daban_sell']}；"
+        f"尾盘打板买 {now_act.get('meal_buy') or clk['meal']} / 卖 {now_act.get('meal_sell') or '-'}"
     )
     lines.append("| 仓 | 买（胜率相对高） | 这时不买 | 卖（胜率相对高） | 拿多久 |")
     lines.append("|---|---|---|---|---|")
@@ -7520,8 +7567,14 @@ def main():
         "- 打板真开仓：只做昨板接力 **09:32–09:50**（不炸）或弱转强 **09:35–10:00**。今首板和尾盘偷鸡不做。"
         "次日不封/开板 **09:30–09:45 走**。未晋级不隔第二夜。"
     )
+    lines.append(
+        "- 尾盘打板/隔夜套利真开仓：只做 **14:40–14:55**（14:30–14:40先看盘，不抢假拉；14:57收盘集合不追）。"
+        "必须过第1节可尾盘：隔夜强势或尾盘二板，不做尾盘首板偷鸡。"
+        "次日 **09:31–09:50 冲高卖**（大约+3%走），低开/开板 **09:30–09:35 先走**（大约-2%），最晚 **10:00 清完**。"
+        "竞价可以挂卖。一字涨停可暂留，其余不隔第二夜。不进第0节可以买。"
+    )
     lines.append("- 散户T+1：" + clk["retail"])
-    lines.append("- 只标钟，不改第0节闸：过闸才能买，没过闸这个钟不能把观察票洗成可以买。")
+    lines.append("- 只标钟，不改第0节闸，也不把尾盘打板写进可以买：过闸才能买，没过闸这个钟不能把观察票洗成可以买。")
     lines.append("")
     out = "\n".join(lines)
     os.makedirs(os.path.join(ROOT, "reports"), exist_ok=True)
@@ -7952,15 +8005,25 @@ if __name__ == "__main__":
         n = style_now_action(t(13, 10))
         assert "第二买点" in n["trend_buy"], n
         books = style_books()
-        assert [b["kind"] for b in books] == ["游资", "趋势", "打板"]
+        assert [b["kind"] for b in books] == ["游资", "趋势", "打板", "尾盘打板"]
+        n = style_now_action(t(14, 45))
+        assert "主买" in n["meal_buy"], n
+        n = style_now_action(t(14, 35))
+        assert "看盘" in n["meal_buy"], n
+        n = style_now_action(t(9, 40))
+        assert "主卖" in n["meal_sell"], n
+        assert books[3]["buy"].startswith("14:40"), books[3]
         c = buy_clock(t(9, 50))
         assert c["youzi"] == "主买点" and c["name"] == "游资黄金买点", c
         c = buy_clock(t(10, 20))
         assert c["name"] == "回踩确认" and "第二买点" in c["youzi"], c
         c = buy_clock(t(14, 10))
         assert c["name"] == "游资最后窗口", c
+        c = buy_clock(t(14, 35))
+        assert c["name"] == "尾盘观察", c
         c = buy_clock(t(14, 45))
         assert c["youzi"] == "不新开" and c["meal"].startswith("真开仓"), c
+        assert any(x[1] == "尾盘打板主买" for x in c["table"]), c["table"]
         c = buy_clock(t(11, 40))
         assert c["name"] == "午休", c
         src = open(__file__, encoding="utf-8").read()

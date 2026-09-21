@@ -517,10 +517,21 @@
         newsEl.title = mealTxt;
       }
       const nowAct = clk.now || {};
-      const clockTxt = nowAct.youzi_buy
-        ? (`游资${nowAct.youzi_buy} / 卖${nowAct.youzi_sell}；趋势${nowAct.trend_buy}`)
-        : (clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第14节");
-      const clockCls = /主买点|真开仓|可尾盘/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(clk.meal || "") + mealTxt) ? cls("可") : "";
+      const mealB = nowAct.meal_buy || clk.meal || "";
+      const mealS = nowAct.meal_sell || "";
+      const mealBuyHot = /主买|真开仓|可尾盘/.test(String(mealB) + String(clk.meal || ""));
+      const mealSellHot = /主卖|竞价可挂|先走/.test(String(mealS) + String(clk.meal || ""));
+      let clockTxt;
+      if (mealBuyHot) {
+        clockTxt = `尾盘打板 ${mealB} / 卖${mealS}`;
+      } else if (nowAct.youzi_buy) {
+        clockTxt = `游资${nowAct.youzi_buy} / 卖${nowAct.youzi_sell}；趋势${nowAct.trend_buy}`;
+        if (mealSellHot) clockTxt += `；尾盘打板卖${mealS}`;
+      } else {
+        clockTxt = clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第14节";
+        if (mealSellHot) clockTxt += `；尾盘打板卖${mealS}`;
+      }
+      const clockCls = /主买点|真开仓|可尾盘|主卖点/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(mealB) + String(mealS) + mealTxt) ? cls("可") : "";
       const cards = [
         ["最新资讯", newsTxt, "", ""],
         ["能不能买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],

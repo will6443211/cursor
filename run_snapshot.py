@@ -1519,7 +1519,7 @@ def youzi_tape_hits(s, q, hist=None):
     return hits
 
 
-BIG_CAP_YI = 400.0  # 超过这个市值的票不当游资标的，不管代码是不是 300/688
+BIG_CAP_YI = 400.0  # 超过这个市值的票不当游资标的，也不做尾盘打板，不管代码是不是 300/688
 
 
 def stock_kind(s, q, hist=None):
@@ -4786,7 +4786,7 @@ def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False,
 def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=None, hist=None):
     """尾盘打板：尾盘确认后隔夜、次日早盘兑现。独立于游资/趋势/打板闸，不进第0节可以买。
     两路：①杨永兴式隔夜强势（3%～5%、不涨停）②尾盘二板（昨首板今封死，换手8%～18%）。
-    尾盘首板当偷鸡，不做。"""
+    尾盘首板当偷鸡，不做。市值≥400亿走趋势仓，硬否决（隔夜+3%弹性不够）。"""
     empty = {
         "in_pool": False, "score": 0, "setup": "非尾盘打板", "call": "观察",
         "why": "未进尾盘打板池", "bits": [], "sell": "次日09:30-10:00卖：+3%止盈 / -2%止损 / 10:00前清完",
@@ -4831,6 +4831,12 @@ def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=
         return {**empty, "in_pool": True, "call": "观察", "why": "情绪退潮，尾盘打板空仓", "bits": ["退潮"]}
     if st == "回避":
         return {**empty, "in_pool": True, "call": "观察", "why": "主线回避，尾盘打板不跟支线", "bits": ["回避"]}
+    if yi is not None and yi >= BIG_CAP_YI:
+        return {
+            **empty, "in_pool": True, "call": "不买", "setup": "大盘不做",
+            "why": f"市值{yi:.0f}亿≥{int(BIG_CAP_YI)}亿，尾盘打板不做权重白马（隔夜+3%弹性不够，走第0节趋势仓）",
+            "bits": [f"市值{yi:.0f}亿"],
+        }
 
     # 尾盘二板：昨首板、今封死、换手8-18%、不是烂板/跳水
     if yday and n_lian == 1 and today_zt:
@@ -7072,9 +7078,9 @@ def main():
     lines.append(
         "跟游资/打板/趋势分开。游资14:30后不新开；尾盘打板反过来，闸窗 **14:30–14:57**，买点钟主买 **14:40–14:55**（14:30先看盘）。"
         "核心：尾盘确认资金还在、不追尾盘偷鸡首板、次日 **09:31–09:50 冲高卖、10:00前了结**。"
-        "两路：①隔夜强势=今涨3%～5%（20cm到8%）、未涨停、量比≥1.2、换手5%～10%、流通50～200亿、均价上方、贴近当日高；"
+        "两路：①隔夜强势=今涨3%～5%（20cm到8%）、未涨停、量比≥1.2、换手5%～10%、流通50～200亿加分、均价上方、贴近当日高；"
         "②尾盘二板=昨首板今封死、换手8%～18%、不是烂板/跳水、贴主线。"
-        "ST/科创/北交所/主线回避/退潮/骗炮不做。14:57后不追脉冲。"
+        "市值≥400亿硬否决（权重白马走趋势仓）。ST/科创/北交所/主线回避/退潮/骗炮不做。14:57后不追脉冲。"
         "这是散户能做的隔夜套利，用来替代游资席位做不到的T+0。"
     )
     lines.append(
@@ -8146,6 +8152,19 @@ if __name__ == "__main__":
             first, qz, {}, None, "可做", "银行", {"phase": "修复"}, t(14, 45), zt_y, {"000001": {"lbc": 2, "zbc": 0, "hard": True}}, hist,
         )
         assert meal3["setup"] == "尾盘二板" and meal3["score"] >= 70, meal3
+        q_big = dict(q)
+        q_big["mcap"] = 3056
+        meal_big = overnight_meal_plan(
+            {"code": "600276", "name": "恒瑞医药", "asset": "stock"},
+            q_big, {}, None, "可做", "创新药", {"phase": "修复"}, t(14, 45), {}, {}, [],
+        )
+        assert meal_big["call"] == "不买" and meal_big["setup"] == "大盘不做", meal_big
+        q_mid = dict(q)
+        q_mid["mcap"] = 399
+        meal_mid = overnight_meal_plan(
+            s, q_mid, {}, None, "可做", "消费电子", {"phase": "修复"}, t(14, 45), {}, {}, [],
+        )
+        assert meal_mid["setup"] == "隔夜强势" and meal_mid["call"] == "可尾盘", meal_mid
         print("SELFTEST_OK", meal["score"], meal3["setup"], meal3["score"], c["slot"])
         sys.exit(0)
     if len(sys.argv) >= 2 and sys.argv[1] in ("--html", "--pdf"):

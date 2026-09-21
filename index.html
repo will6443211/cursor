@@ -513,8 +513,11 @@
         mealTxt = mealWatch.length ? ("等到14:30 · " + mealWatch.join("、")) : "等到14:30";
       }
       else if (meal.phase === "too_late") mealTxt = "14:57后不追";
-      const clockTxt = clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第0a节";
-      const clockCls = /主买点|真开仓/.test(String(clk.youzi || "") + String(clk.meal || "")) ? cls("可") : "";
+      const nowAct = clk.now || {};
+      const clockTxt = nowAct.youzi_buy
+        ? (`游资${nowAct.youzi_buy} / 卖${nowAct.youzi_sell}；趋势${nowAct.trend_buy}`)
+        : (clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第0a节");
+      const clockCls = /主买点|真开仓/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(clk.meal || "")) ? cls("可") : "";
       const cards = [
         ["下手钟", clockTxt, clockCls, ""],
         ["能不能买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],

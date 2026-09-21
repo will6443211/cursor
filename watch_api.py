@@ -67,12 +67,47 @@ def _job_alive():
         return False
 
 
+def _job_stale():
+    started = _job.get("started")
+    if not started:
+        return True
+    try:
+        t0 = datetime.datetime.strptime(started, "%Y-%m-%d %H:%M:%S")
+        tz = datetime.timezone(datetime.timedelta(hours=8))
+        t0 = t0.replace(tzinfo=tz)
+        return (datetime.datetime.now(tz) - t0).total_seconds() > 240
+    except Exception:
+        return False
+
+
+def _log_tail(n=12):
+    if not os.path.isfile(SNAP_LOG):
+        return ""
+    try:
+        lines = open(SNAP_LOG, encoding="utf-8", errors="replace").read().splitlines()
+        return "\n".join(lines[-n:])
+    except Exception:
+        return ""
+
+
+def _explain_rc(rc):
+    tail = _log_tail(30)
+    if "Traceback (most recent call last):" in tail:
+        lines = [x for x in tail.splitlines() if x.strip()]
+        last = lines[-1] if lines else "脚本异常"
+        return f"快照脚本出错：{last}"
+    if rc == 1:
+        return "上一轮快照还在写，请再点一次重跑（不必等定时任务）"
+    return f"快照退出码 {rc}"
+
+
 def snapshot_status():
     with _job_lock:
         running = bool(_job.get("running") and _job_alive())
-        if _job.get("running") and not running:
+        if _job.get("running") and (not running or _job_stale()):
             _job["running"] = False
             _job["pid"] = None
+            running = False
         st = dict(_job)
     latest = {}
     jp = os.path.join(ROOT, "reports", "latest.json")
@@ -81,13 +116,6 @@ def snapshot_status():
             latest = json.load(open(jp, encoding="utf-8"))
         except Exception:
             latest = {}
-    log_tail = ""
-    if os.path.isfile(SNAP_LOG):
-        try:
-            lines = open(SNAP_LOG, encoding="utf-8", errors="replace").read().splitlines()
-            log_tail = "\n".join(lines[-8:])
-        except Exception:
-            log_tail = ""
     return {
         "ok": True,
         "running": running,
@@ -97,20 +125,29 @@ def snapshot_status():
         "buy_today": latest.get("buy_today"),
         "buy_names": latest.get("buy_names") or [],
         "top5": latest.get("top5") or [],
-        "log": log_tail,
+        "log": _log_tail(8),
     }
 
 
 def start_snapshot():
     os.makedirs(LOG_DIR, exist_ok=True)
     with _job_lock:
-        if _job.get("running") and _job_alive():
+        if _job.get("running") and _job_alive() and not _job_stale():
             return {"ok": True, "started": False, "running": True, "error": "已有快照在跑，请稍候"}
         logf = open(SNAP_LOG, "ab")
+        stamp = datetime.datetime.now(
+            datetime.timezone(datetime.timedelta(hours=8))
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            logf.write(f"\n--- manual {stamp} ---\n".encode())
+            logf.flush()
+        except Exception:
+            pass
         env = os.environ.copy()
         env["TZ"] = "Asia/Shanghai"
+        # 手动重跑排队等锁，最多 2 分钟；不要用 -n，否则脚本一崩就被误报成「定时任务在跑」
         p = subprocess.Popen(
-            ["/usr/bin/flock", "-n", SNAP_LOCK, "/usr/bin/python3", os.path.join(ROOT, "run_snapshot.py")],
+            ["/usr/bin/flock", "-w", "120", SNAP_LOCK, "/usr/bin/python3", os.path.join(ROOT, "run_snapshot.py")],
             cwd=ROOT,
             stdout=logf,
             stderr=subprocess.STDOUT,
@@ -119,9 +156,7 @@ def start_snapshot():
         )
         _job.update({
             "running": True, "pid": p.pid,
-            "started": datetime.datetime.now(
-                datetime.timezone(datetime.timedelta(hours=8))
-            ).strftime("%Y-%m-%d %H:%M:%S"),
+            "started": stamp,
             "error": None,
         })
 
@@ -131,7 +166,7 @@ def start_snapshot():
                 _job["running"] = False
                 _job["pid"] = None
                 if rc != 0:
-                    _job["error"] = "未能开跑（可能已有定时任务在跑）" if rc == 1 else f"快照退出码 {rc}"
+                    _job["error"] = _explain_rc(rc)
             try:
                 logf.close()
             except Exception:

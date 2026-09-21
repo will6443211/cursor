@@ -717,7 +717,7 @@
       try {
         const r = await api("/api/snapshot", {method: "POST", body: "{}"});
         const d = r.data;
-        if (!d.ok) { sayHere(d.error || "启动失败", "err"); return; }
+        if (!d.ok) { sayHere(d.error || "启动失败", "err"); if (btn) btn.disabled = false; return; }
         sayHere(d.started ? "全池快照已开始，大约半分钟。不用关页、不用手动刷新，生成完会自动换新报告。" : (d.error || "快照进行中…"));
         if (snapTimer) clearInterval(snapTimer);
         let n = 0;

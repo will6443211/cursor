@@ -484,16 +484,8 @@
       const hx = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
       const boards = (desk.boards || []).map(x => String(x).replace(/[（(][^）)]*[）)]/g, "")).filter(Boolean).join("、") || "暂无映射";
       const names = (desk.names || []).join("、") || "先看板块";
-      const newsEl = document.getElementById("ovn-news");
-      if (newsEl) {
-        const bits = String(desk.news || "").split(/[；;]/).map(s => s.trim()).filter(Boolean);
-        if (!bits.length) {
-          newsEl.innerHTML = "<b>隔夜消息</b><ul><li>快讯暂缺</li></ul>";
-        } else {
-          newsEl.innerHTML = "<b>隔夜消息</b><ul>" + bits.map(x => `<li>${hx(x)}</li>`).join("") + "</ul>";
-        }
-        newsEl.title = bits.join("；") || "快讯暂缺";
-      }
+      const newsBits = String(desk.news || "").split(/[；;]/).map(s => s.trim()).filter(Boolean);
+      const newsTxt = newsBits.length ? newsBits.slice(0, 3).join("；") : "快讯暂缺";
       const meal = d.overnight_meal || {};
       const mealOk = (meal.ok || []).map(x => x.name).filter(Boolean);
       const mealHold = (meal.hold || []).map(x => x.name).filter(Boolean);
@@ -501,10 +493,10 @@
       let mealTxt = "未到窗口";
       let mealCls = "";
       if (meal.phase === "buy") {
-        mealTxt = mealOk.length ? ("可隔夜 " + mealOk.join("、")) : "本轮没有";
+        mealTxt = mealOk.length ? ("可尾盘 " + mealOk.join("、")) : "本轮没有";
         mealCls = mealOk.length ? cls("可") : "";
       } else if (meal.phase === "sell") {
-        mealTxt = mealHold.length ? ("早盘清 " + mealHold.join("、")) : "无隔夜仓";
+        mealTxt = mealHold.length ? ("早盘清 " + mealHold.join("、")) : "无尾盘仓";
         mealCls = mealHold.length ? "watchc" : "";
       } else if (mealHold.length) {
         mealTxt = "待卖 " + mealHold.join("、");
@@ -513,11 +505,22 @@
         mealTxt = mealWatch.length ? ("等到14:30 · " + mealWatch.join("、")) : "等到14:30";
       }
       else if (meal.phase === "too_late") mealTxt = "14:57后不追";
+      const newsEl = document.getElementById("ovn-news");
+      if (newsEl) {
+        let items = [];
+        if (meal.phase === "buy" && mealOk.length) items = mealOk.map(n => "可尾盘 " + n);
+        else if (meal.phase === "sell" && mealHold.length) items = mealHold.map(n => "早盘清 " + n);
+        else if (mealHold.length) items = mealHold.map(n => "待卖 " + n);
+        else if (meal.phase === "wait" && mealWatch.length) items = mealWatch.map(n => "14:30待确认 " + n);
+        if (!items.length) items = [mealTxt];
+        newsEl.innerHTML = "<b>尾盘打板</b><ul>" + items.map(x => `<li>${hx(x)}</li>`).join("") + "</ul>";
+        newsEl.title = mealTxt;
+      }
       const nowAct = clk.now || {};
       const clockTxt = nowAct.youzi_buy
         ? (`游资${nowAct.youzi_buy} / 卖${nowAct.youzi_sell}；趋势${nowAct.trend_buy}`)
         : (clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第0a节");
-      const clockCls = /主买点|真开仓/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(clk.meal || "")) ? cls("可") : "";
+      const clockCls = /主买点|真开仓|可尾盘/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(clk.meal || "") + mealTxt) ? cls("可") : "";
       const cards = [
         ["下手钟", clockTxt, clockCls, ""],
         ["能不能买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
@@ -527,7 +530,7 @@
         ["可做主线", (d.doable || []).join("、") || "—", "ok", ""],
         ["回避主线", avoidBits, "bad", ""],
         ["次日关注", "板块 " + boards + " · 个股 " + names, "", ""],
-        ["隔夜饭", mealTxt, mealCls, ""],
+        ["最新资讯", newsTxt, "", ""],
       ];
       document.getElementById("cards").innerHTML = cards.map(([k,v,c,extra]) =>
         `<div class="card ${extra||""}"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`

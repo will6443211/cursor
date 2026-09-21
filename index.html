@@ -534,7 +534,7 @@
       const cards = [
         ["今日必买-趋势", "最佳 10:00–10:30 · 13:00–13:30", trendNames || "暂无，不开新仓", trendNames ? cls("可") : cls("不"), ""],
         ["今日必买-游资", "最佳 09:35–10:15", youziNames || "暂无，不开新仓", youziNames ? cls("可") : cls("不"), ""],
-        ["午夜关注", "独立仓 · 最佳 14:40–14:55 · 不进今日必买", mealTxt, mealCls, ""],
+        ["尾盘狙击", "独立仓 · 最佳 14:40–14:55 · 不进今日必买", mealTxt, mealCls, ""],
         ["最值得买", "", top5, "", ""],
         ["可做主线", "", (d.doable || []).join("、") || "—", "ok", ""],
         ["回避主线", "", avoidBits, "bad", ""],
@@ -674,7 +674,7 @@
           <div class="card"><div class="k">均线分</div><div class="v">${sc.ma ?? "—"}</div></div>
           <div class="card"><div class="k">盘面</div><div class="v">${sc.tape_txt || "—"}</div></div>
           <div class="card"><div class="k">现价 / 今涨</div><div class="v">${i.px ?? "—"} ${chg}</div></div>
-          <div class="card"><div class="k">仓 / 主线</div><div class="v">${({"打板":"早盘接力仓","尾盘打板":"尾盘隔夜狙击","尾盘隔夜仓":"尾盘隔夜狙击"}[d.kind] || d.kind || "")} · ${d.line || "—"}</div></div>
+          <div class="card"><div class="k">仓 / 主线</div><div class="v">${({"打板":"早盘接力仓","尾盘打板":"尾盘狙击","尾盘隔夜仓":"尾盘狙击","午夜关注":"尾盘狙击"}[d.kind] || d.kind || "")} · ${d.line || "—"}</div></div>
           <div class="card"><div class="k">竞价</div><div class="v ${callClass(sc.auction)}">${sc.auction || "—"} (${sc.auction_pts>=0?"+":""}${sc.auction_pts || 0})</div></div>
           <div class="card"><div class="k">量价 / 均价</div><div class="v">${tp.vp || "—"} · ${tp.vwap_pos || "—"}</div></div>
           <div class="card"><div class="k">早盘接力仓</div><div class="v">${(d.daban && d.daban.in_pool) ? ((d.daban.setup||"") + " " + (d.daban.score||0)) : "未入池"}</div></div>

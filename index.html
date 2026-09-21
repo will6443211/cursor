@@ -497,6 +497,7 @@
       const meal = d.overnight_meal || {};
       const mealOk = (meal.ok || []).map(x => x.name).filter(Boolean);
       const mealHold = (meal.hold || []).map(x => x.name).filter(Boolean);
+      const mealWatch = (meal.watch || []).map(x => x.name).filter(Boolean);
       let mealTxt = "未到窗口";
       let mealCls = "";
       if (meal.phase === "buy") {
@@ -508,7 +509,9 @@
       } else if (mealHold.length) {
         mealTxt = "待卖 " + mealHold.join("、");
         mealCls = "watchc";
-      } else if (meal.phase === "wait") mealTxt = "等到14:30";
+      } else if (meal.phase === "wait") {
+        mealTxt = mealWatch.length ? ("等到14:30 · " + mealWatch.join("、")) : "等到14:30";
+      }
       else if (meal.phase === "too_late") mealTxt = "14:57后不追";
       const clockTxt = clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第0a节";
       const clockCls = /主买点|真开仓/.test(String(clk.youzi || "") + String(clk.meal || "")) ? cls("可") : "";

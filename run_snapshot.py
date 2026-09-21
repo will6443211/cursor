@@ -6278,6 +6278,21 @@ def main():
                 "why": m.get("why") or "", "sell": m.get("sell") or "",
             })
     meal_ok.sort(key=lambda x: -x["score"])
+    meal_watch_rows = []
+    for s, q, f, yld, hist in rows:
+        if not q:
+            continue
+        m = meal_by_code.get(s["code"]) or {}
+        if m.get("call") == "可隔夜":
+            continue
+        if (m.get("score") or 0) < 70:
+            continue
+        meal_watch_rows.append({
+            "code": s["code"], "name": s["name"], "px": q["px"], "chg": q["chg"],
+            "setup": m.get("setup"), "score": m.get("score") or 0,
+            "call": m.get("call") or "观察", "why": m.get("why") or "",
+        })
+    meal_watch_rows.sort(key=lambda x: -x["score"])
     if meal_phase == "buy":
         overnight_meal_save(meal_date, meal_ok[:5], now)
     meal_blob = overnight_meal_load()
@@ -6777,6 +6792,37 @@ def main():
         lines.append(f"- 对照表要等隔一个交易日才有可评估样本（本次新增 {n_j} 条）。")
     lines.append("- 复盘只用来改阈值，不参与今天的判别。")
 
+    trend_watch = [f"{s['name']}" for s, q, f, yld in ranked if verdicts.get(s["code"], ("",))[0] == "观察"]
+    yz_watch = [f"{s['name']}" for s, q, f, yld, yz in yz_youzi if verdicts.get(s["code"], ("",))[0] == "观察" and yz["score"] >= 60]
+    if trend_watch:
+        lines.append("- 趋势观察：" + "、".join(trend_watch[:8]))
+    if yz_watch:
+        lines.append("- 游资观察（7a尚可但总判没过）：" + "、".join(yz_watch[:6]))
+    high_no = []
+    for s, q, f, yld, hist, buy, kind, call in sorted(t1_all, key=lambda r: -r[5]):
+        if call in ("不买", "不追") and buy >= 60:
+            why = (verdicts.get(s["code"]) or ("", ""))[1]
+            high_no.append(f"{s['name']} {buy:.0f}分 {call}（{why}）")
+        if len(high_no) >= 5:
+            break
+    if high_no:
+        lines.append("- 高分但不买：" + "；".join(high_no) + "。分高≠能买")
+    lines.append("- 能不能买以第0节「可以买/买点」为准。TOP5只是可小仓里按值分谁更靠前，值分高不能推翻闸，也不能把出货票洗白。隔夜饭只在0e，不进可以买。")
+    lines.append("- 可以买=总闸过了才能开仓。TOP5只排可小仓（按值分）；观察/可试仓再热也只进备选池，不把TOP5凑满。值分：闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价。均线分只拉开能买里谁更稳，不能翻盘。")
+    lines.append("- 值分去重：游资/打板/ETF 的盘面分里已含板块资金和竞价质量，值分里主线热度只按0.45计、竞价不再重复加（竞价列显示0即此意，判别仍照常用）；趋势用买点分，不含这两项，全额计。")
+    lines.append("- 判别加了滞后带：刚过线要连续两次达标才给可小仓。降级、骗炮、回避立即生效。情绪退潮：打板空仓，游资抬门槛只做低位，趋势不追热，不再一刀切关掉游资。")
+    lines.append("- 打板仓：今首板不追。只做昨首板一进二、昨烂板弱转强、板内龙头回头。昨一字不打。赚钱效应差或情绪退潮时打板不新开。打板可小仓不要求 7a。")
+    lines.append("- 竞价涨停/近板开后砸盘→不买（出货）。竞价质量已并入各战法盘面分；量比和换手都按时段归一（早盘成交前置，10:00的量比1.5不等于14:30的1.5）。")
+    lines.append("- 表一看「买点」列：可小仓=能买，观察=盯着，不买/不追=不能买。分只是均线健康。")
+    miss_q = [x["name"] for x in stocks + etfs if not live.get(x["code"])]
+    if miss_q or FETCH_FAIL:
+        bits = []
+        if miss_q:
+            bits.append("无行情（停牌/取不到）：" + "、".join(miss_q[:8]))
+        if FETCH_FAIL:
+            bits.append("取数失败：" + "、".join(f"{k}×{v}" for k, v in FETCH_FAIL.items()))
+        lines.append("- **数据完整性**：" + "；".join(bits) + "。这些票的结论不可用，别当成「没信号」。")
+
     # ---- 0e 隔夜饭（独立仓） ----
     lines.append("### 0e 隔夜饭（尾盘买、次日早盘卖；不进第0节可以买）")
     lines.append(
@@ -6811,50 +6857,11 @@ def main():
             f"{x.get('name')}({x.get('setup') or '-'} {x.get('px')})" for x in meal_hold_picks[:6]
         ))
     meal_watch = []
-    for code, m in sorted(meal_by_code.items(), key=lambda kv: -kv[1].get("score", 0)):
-        if m.get("call") == "可隔夜":
-            continue
-        if (m.get("score") or 0) < 55:
-            continue
-        row = next((x for x in rows if x[0]["code"] == code), None)
-        if not row:
-            continue
-        meal_watch.append(f"{row[0]['name']} {m.get('setup')} {m.get('call')} {m.get('score', 0):.0f}分")
-        if len(meal_watch) >= 6:
-            break
+    for r in meal_watch_rows[:6]:
+        meal_watch.append(f"{r['name']} {r.get('setup')} {r.get('call')} {r.get('score', 0):.0f}分")
     if meal_watch:
-        lines.append("- 在池未过闸：" + "；".join(meal_watch))
-
-    trend_watch = [f"{s['name']}" for s, q, f, yld in ranked if verdicts.get(s["code"], ("",))[0] == "观察"]
-    yz_watch = [f"{s['name']}" for s, q, f, yld, yz in yz_youzi if verdicts.get(s["code"], ("",))[0] == "观察" and yz["score"] >= 60]
-    if trend_watch:
-        lines.append("- 趋势观察：" + "、".join(trend_watch[:8]))
-    if yz_watch:
-        lines.append("- 游资观察（7a尚可但总判没过）：" + "、".join(yz_watch[:6]))
-    high_no = []
-    for s, q, f, yld, hist, buy, kind, call in sorted(t1_all, key=lambda r: -r[5]):
-        if call in ("不买", "不追") and buy >= 60:
-            why = (verdicts.get(s["code"]) or ("", ""))[1]
-            high_no.append(f"{s['name']} {buy:.0f}分 {call}（{why}）")
-        if len(high_no) >= 5:
-            break
-    if high_no:
-        lines.append("- 高分但不买：" + "；".join(high_no) + "。分高≠能买")
-    lines.append("- 能不能买以第0节「可以买/买点」为准。TOP5只是可小仓里按值分谁更靠前，值分高不能推翻闸，也不能把出货票洗白。")
-    lines.append("- 可以买=总闸过了才能开仓。TOP5只排可小仓（按值分）；观察/可试仓再热也只进备选池，不把TOP5凑满。值分：闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价。均线分只拉开能买里谁更稳，不能翻盘。")
-    lines.append("- 值分去重：游资/打板/ETF 的盘面分里已含板块资金和竞价质量，值分里主线热度只按0.45计、竞价不再重复加（竞价列显示0即此意，判别仍照常用）；趋势用买点分，不含这两项，全额计。")
-    lines.append("- 判别加了滞后带：刚过线要连续两次达标才给可小仓。降级、骗炮、回避立即生效。情绪退潮：打板空仓，游资抬门槛只做低位，趋势不追热，不再一刀切关掉游资。")
-    lines.append("- 打板仓：今首板不追。只做昨首板一进二、昨烂板弱转强、板内龙头回头。昨一字不打。赚钱效应差或情绪退潮时打板不新开。打板可小仓不要求 7a。")
-    lines.append("- 竞价涨停/近板开后砸盘→不买（出货）。竞价质量已并入各战法盘面分；量比和换手都按时段归一（早盘成交前置，10:00的量比1.5不等于14:30的1.5）。")
-    lines.append("- 表一看「买点」列：可小仓=能买，观察=盯着，不买/不追=不能买。分只是均线健康。")
-    miss_q = [x["name"] for x in stocks + etfs if not live.get(x["code"])]
-    if miss_q or FETCH_FAIL:
-        bits = []
-        if miss_q:
-            bits.append("无行情（停牌/取不到）：" + "、".join(miss_q[:8]))
-        if FETCH_FAIL:
-            bits.append("取数失败：" + "、".join(f"{k}×{v}" for k, v in FETCH_FAIL.items()))
-        lines.append("- **数据完整性**：" + "；".join(bits) + "。这些票的结论不可用，别当成「没信号」。")
+        tag = "14:30待确认" if meal_phase == "wait" else "在池未过闸"
+        lines.append(f"- **{tag}：** " + "；".join(meal_watch))
     lines.append("")
     ovn_blk = MACRO.get("overnight_external") or {}
     news = (sc := (ovn_scan or {})).get("news") or load_macro_news() or {}
@@ -7390,6 +7397,7 @@ def main():
             "phase": meal_phase,
             "ok": meal_ok[:5],
             "hold": meal_hold_picks[:5],
+            "watch": meal_watch_rows[:5],
         },
         "buy_clock": {
             "slot": clk["slot"],

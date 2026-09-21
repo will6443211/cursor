@@ -64,7 +64,7 @@
     .idx-chip.up { color:#d67a7a; }
     .idx-chip.dn { color:#6fba8d; }
     .idx-chip.flat { color:#c5c2b6; }
-    .cards { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:8px;
+    .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(118px, 1fr)); gap:8px;
       margin:10px 0 4px; align-items:stretch; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
       padding:8px 10px; min-width:0; }
@@ -467,7 +467,8 @@
       const t = d.time || d.time_iso || "";
       const clockEl = document.getElementById("clock");
       if (clockEl) clockEl.textContent = fmtBj(t);
-      document.getElementById("meta").textContent = "先看第0节「能不能买」 · 大盘是本轮快照当时价";
+      const clk = d.buy_clock || {};
+      document.getElementById("meta").textContent = (clk.action ? ("下手：" + clk.slot + " " + clk.action + " · ") : "") + "先看第0节「能不能买」 · 大盘是本轮快照当时价";
       paintIdxTape(d);
       const top5 = (d.top5 || []).map(x => x.name).join("、") || "—";
       const pick = d.pick_name || "没有";
@@ -493,7 +494,26 @@
         }
         newsEl.title = bits.join("；") || "快讯暂缺";
       }
+      const meal = d.overnight_meal || {};
+      const mealOk = (meal.ok || []).map(x => x.name).filter(Boolean);
+      const mealHold = (meal.hold || []).map(x => x.name).filter(Boolean);
+      let mealTxt = "未到窗口";
+      let mealCls = "";
+      if (meal.phase === "buy") {
+        mealTxt = mealOk.length ? ("可隔夜 " + mealOk.join("、")) : "本轮没有";
+        mealCls = mealOk.length ? cls("可") : "";
+      } else if (meal.phase === "sell") {
+        mealTxt = mealHold.length ? ("早盘清 " + mealHold.join("、")) : "无隔夜仓";
+        mealCls = mealHold.length ? "watchc" : "";
+      } else if (mealHold.length) {
+        mealTxt = "待卖 " + mealHold.join("、");
+        mealCls = "watchc";
+      } else if (meal.phase === "wait") mealTxt = "等到14:30";
+      else if (meal.phase === "too_late") mealTxt = "14:57后不追";
+      const clockTxt = clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第0a节";
+      const clockCls = /主买点|真开仓/.test(String(clk.youzi || "") + String(clk.meal || "")) ? cls("可") : "";
       const cards = [
+        ["下手钟", clockTxt, clockCls, ""],
         ["能不能买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
         ["总闸", d.buy_today || "—", cls(d.buy_today), ""],
         ["首选", pick, "", ""],
@@ -501,6 +521,7 @@
         ["可做主线", (d.doable || []).join("、") || "—", "ok", ""],
         ["回避主线", avoidBits, "bad", ""],
         ["次日关注", "板块 " + boards + " · 个股 " + names, "", ""],
+        ["隔夜饭", mealTxt, mealCls, ""],
       ];
       document.getElementById("cards").innerHTML = cards.map(([k,v,c,extra]) =>
         `<div class="card ${extra||""}"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`

@@ -6,7 +6,7 @@
 或 /agent/watchlist/自选快照.pdf
 或 /agent/watchlist/reports/20260917_1735.pdf
 
-完整13节出表模板：
+完整目录出表模板（最新资讯 + 0–16节）：
 /agent/watchlist/reports/20260917_1735.md
 
 浏览器网页（必须用 Chrome/Edge 打开，不要在 Cursor 里点）：
@@ -17,8 +17,8 @@
 - watchlist-afternoon-hour：13:00 / 14:00 / 15:00
 - watchlist-1510：15:10（收盘价定格后再刷胜率追踪）
 - watchlist-1430：14:30
-- watchlist-1450：14:50（尾盘打板确认）
-先看第0节「今日必买」和「今日最值得买 TOP5」。第3节看集合竞价。表一看「表一买点」（含竞价列）。分是均线健康，高分也可以不买。竞价/值分都不混进表一分。
+- watchlist-1450：14:50（尾盘隔夜仓确认）
+先看第0节「今日必买」和「今日最值得买 TOP5」。第5节看集合竞价。表一看「表一买点」（含竞价列）。分是均线健康，高分也可以不买。竞价/值分都不混进表一分。
 
 最新快照指针：
 /agent/watchlist/reports/latest.json

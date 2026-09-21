@@ -409,7 +409,7 @@ MEAL_LINE_DAYS = 3
 
 
 def overnight_meal_phase(now=None):
-    """尾盘打板自己的钟。不复用 youzi_late：14:30 后游资空仓，尾盘打板才开始。"""
+    """尾盘隔夜仓自己的钟。不复用 youzi_late：14:30 后游资空仓，尾盘隔夜仓才开始。"""
     now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     if now.weekday() >= 5:
         return "off"
@@ -493,8 +493,18 @@ def meal_line_ok(line, st, hot):
     return False
 
 
+def display_kind(kind):
+    """报告/首页给人看的仓名。内部 journal kind 仍用 打板。"""
+    k = (kind or "").strip()
+    return {
+        "打板": "早盘接力仓",
+        "尾盘打板": "尾盘隔夜仓",
+        "隔夜饭": "尾盘隔夜仓",
+    }.get(k, k or "-")
+
+
 def style_books():
-    """四仓买卖钟。按A股短线常见高胜率做法，不是席位T+0。尾盘打板=隔夜套利，单独一仓。"""
+    """四仓买卖钟。按A股短线常见高胜率做法，不是席位T+0。尾盘隔夜仓=隔夜套利，单独一仓。"""
     return [
         {
             "kind": "游资",
@@ -511,14 +521,14 @@ def style_books():
             "hold": "按均线/主线拿几天，不是当天出完",
         },
         {
-            "kind": "打板",
+            "kind": "早盘接力仓",
             "buy": "昨首板今接力 09:32–09:50 不炸再打；弱转强 09:35–10:00 低开翻红站住均价",
             "skip": "今首板、尾盘偷鸡、一字板、二进三硬打",
             "sell": "次日不封/开板 09:30–09:45 走；冲高不封 09:35–10:00 卖；续板一字可留",
             "hold": "未晋级不隔第二夜。封死才看到下一板",
         },
         {
-            "kind": "尾盘打板",
+            "kind": "尾盘隔夜仓",
             "buy": "14:40–14:55 主买（第1节可尾盘：隔夜强势或尾盘二板）。14:30–14:40只看盘，14:57不追。独立仓，不进今日必买",
             "skip": "14:00–14:30假拉、尾盘首板偷鸡、14:57收盘集合、均价下、近10日无涨停、非近3日主线、未过第1节闸",
             "sell": "次日 09:31–09:50 冲高卖（约+3%走）；低开/开板 09:30–09:35 先走（约-2%）；最晚 10:00 清完。竞价可挂",
@@ -528,7 +538,7 @@ def style_books():
 
 
 def style_now_action(now=None):
-    """这一分钟：四仓是该买、该卖旧仓，还是空仓。尾盘打板买卖窗跟游资反着。"""
+    """这一分钟：四仓是该买、该卖旧仓，还是空仓。尾盘隔夜仓买卖窗跟游资反着。"""
     now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     hm = now.strftime("%H:%M")
     off = {
@@ -599,7 +609,7 @@ def style_now_action(now=None):
         return {
             "youzi_buy": "原则上不新开（胜率差）", "youzi_sell": "旧仓 14:00 前尽量出完",
             "trend_buy": "不追新高，回踩才看", "trend_sell": "主线净出则准备次日清",
-            "daban_buy": "不新开，改看尾盘打板", "daban_sell": "残仓清掉",
+            "daban_buy": "不新开，改看尾盘隔夜仓", "daban_sell": "残仓清掉",
             "meal_buy": "等到14:30看盘，现在是假拉高发", "meal_sell": "今天还没买",
         }
     if "14:30" <= hm < "14:40":
@@ -625,7 +635,7 @@ def style_now_action(now=None):
 
 
 def buy_clock(now=None):
-    """A股主流下手钟。09:30–14:30 不是随时买：游资有黄金段，趋势看回踩，尾盘打板只吃尾盘。
+    """A股主流下手钟。09:30–14:30 不是随时买：游资有黄金段，趋势看回踩，尾盘隔夜仓只吃尾盘。
     散户没有游资席位的 T+0，「上午买下午卖」要整体滞后一天。"""
     now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     hm = now.strftime("%H:%M")
@@ -633,21 +643,21 @@ def buy_clock(now=None):
         "游资席位「上午买下午卖」是T+0（底仓/对倒），散户A股T+1做不到。"
         "散户映射：今天09:35–10:30买 → 明天09:30–10:00冲高卖（整体滞后一天）。"
         "昨天已有的仓今天下午可以卖，那是卖旧仓，不是当天买当天卖。"
-        "尾盘打板才是散户合法的隔夜套利：尾盘买、次日早盘卖，单独看第1节，不进第0节可以买。"
+        "尾盘隔夜仓才是散户合法的隔夜套利：尾盘买、次日早盘卖，单独看第1节，不进第0节可以买。"
     )
     table = [
-        ("09:15-09:25", "集合竞价", "只看开板/骗炮，不下手。尾盘打板昨仓可挂卖，一字涨停不卖"),
+        ("09:15-09:25", "集合竞价", "只看开板/骗炮，不下手。尾盘隔夜仓昨仓可挂卖，一字涨停不卖"),
         ("09:25-09:30", "竞价结果", "确认炸板/骗炮，仍不追"),
-        ("09:30-09:35", "开盘三分钟", "等方向，不追飞刀。尾盘打板低开先走，高开等冲"),
-        ("09:35-10:00", "游资黄金买点", "过闸+均价上+主线在→下手。尾盘打板主卖点（冲高约+3%）"),
-        ("10:00-10:30", "回踩确认", "10:30再刷；均价/主线还在就补买。尾盘打板10:00前必须清完"),
+        ("09:30-09:35", "开盘三分钟", "等方向，不追飞刀。尾盘隔夜仓低开先走，高开等冲"),
+        ("09:35-10:00", "游资黄金买点", "过闸+均价上+主线在→下手。尾盘隔夜仓主卖点（冲高约+3%）"),
+        ("10:00-10:30", "回踩确认", "10:30再刷；均价/主线还在就补买。尾盘隔夜仓10:00前必须清完"),
         ("10:30-11:30", "上午后半", "趋势回踩均线/均价；游资弹性变差，过闸仍可跟"),
         ("11:30-13:00", "午休", "不交易"),
         ("13:00-13:30", "午后确认", "趋势第二窗口；游资看资金有没有回流"),
         ("13:30-14:00", "午后中段", "趋势可买；游资谨慎"),
-        ("14:00-14:30", "游资最后窗口", "过闸才买，14:30截止。尾盘打板还等，这段假拉多"),
+        ("14:00-14:30", "游资最后窗口", "过闸才买，14:30截止。尾盘隔夜仓还等，这段假拉多"),
         ("14:30-14:40", "尾盘观察", "游资空仓。隔夜套利先看封死/均价，不抢14:30假拉"),
-        ("14:40-14:55", "尾盘打板主买", "第1节可尾盘才买；14:40后更稳，14:57不追"),
+        ("14:40-14:55", "尾盘隔夜仓主买", "第1节可尾盘才买；14:40后更稳，14:57不追"),
         ("14:57-15:00", "收盘集合", "不追脉冲"),
     ]
     empty = {
@@ -667,21 +677,21 @@ def buy_clock(now=None):
     if "09:15" <= hm < "09:30":
         return {
             **empty, "slot": "09:15-09:30", "name": "集合竞价",
-            "action": "只看开板/骗炮，集合竞价不下手。尾盘打板昨仓可挂卖",
+            "action": "只看开板/骗炮，集合竞价不下手。尾盘隔夜仓昨仓可挂卖",
             "youzi": "看盘", "trend": "看盘", "daban": "看封单",
-            "meal": "卖尾盘打板（竞价可挂）",
+            "meal": "卖尾盘隔夜仓（竞价可挂）",
         }
     if "09:30" <= hm < "09:35":
         return {
             **empty, "slot": "09:30-09:35", "name": "开盘三分钟",
-            "action": "等方向，不追飞刀。尾盘打板低开先走，高开等冲",
+            "action": "等方向，不追飞刀。尾盘隔夜仓低开先走，高开等冲",
             "youzi": "等3分钟", "trend": "等3分钟", "daban": "等3分钟看炸板",
             "meal": "冲高先卖 / 低开先走",
         }
     if "09:35" <= hm < "10:00":
         return {
             **empty, "slot": "09:35-10:00", "name": "游资黄金买点",
-            "action": "过闸+均价上+主线在→下手。尾盘打板这会儿是主卖点，不是买点",
+            "action": "过闸+均价上+主线在→下手。尾盘隔夜仓这会儿是主卖点，不是买点",
             "youzi": "主买点", "trend": "可买（确认均价）", "daban": "一进二主买点",
             "meal": "主卖点，10:00前必须卖完",
         }
@@ -722,21 +732,21 @@ def buy_clock(now=None):
     if "14:00" <= hm < "14:30":
         return {
             **empty, "slot": "14:00-14:30", "name": "游资最后窗口",
-            "action": "过闸才买，14:30截止。尾盘打板还等，这段假拉多、胜率差",
+            "action": "过闸才买，14:30截止。尾盘隔夜仓还等，这段假拉多、胜率差",
             "youzi": "最后买点", "trend": "可买", "daban": "14:30前最后看",
             "meal": "等到14:30看盘",
         }
     if "14:30" <= hm < "14:40":
         return {
             **empty, "slot": "14:30-14:40", "name": "尾盘观察",
-            "action": "游资/打板不新开。尾盘打板先看封死、均价、资金还在，不抢14:30假拉",
+            "action": "游资/早盘接力不新开。尾盘隔夜仓先看封死、均价、资金还在，不抢14:30假拉",
             "youzi": "不新开", "trend": "可买但不追新高", "daban": "不新开，改看第1节",
             "meal": "看盘确认，14:40后再下",
         }
     if "14:40" <= hm < "14:57":
         return {
-            **empty, "slot": "14:40-14:55", "name": "尾盘打板主买",
-            "action": "游资/打板不新开。尾盘打板主买点：第1节可尾盘才下，14:57不追",
+            **empty, "slot": "14:40-14:55", "name": "尾盘隔夜仓主买",
+            "action": "游资/早盘接力不新开。尾盘隔夜仓主买点：第1节可尾盘才下，14:57不追",
             "youzi": "不新开", "trend": "可买但不追新高", "daban": "不新开，改看第1节",
             "meal": "真开仓（主买点）",
         }
@@ -1573,7 +1583,7 @@ def youzi_tape_hits(s, q, hist=None):
     return hits
 
 
-BIG_CAP_YI = 400.0  # 超过这个市值的票不当游资标的，也不做尾盘打板，不管代码是不是 300/688
+BIG_CAP_YI = 400.0  # 超过这个市值的票不当游资标的，也不做尾盘隔夜仓，不管代码是不是 300/688
 
 
 def stock_kind(s, q, hist=None):
@@ -3118,7 +3128,7 @@ def overnight_news_lines(now, ovn_scan):
     lines.append("## 最新资讯（外盘+快讯+次日预案；只盯不开仓）")
     lines.append(
         "外盘报价、商品、快讯和次日映射写在这里，单独一节、放在最前。"
-        "只盯不改买点闸，不进表一分/7a，也不跟尾盘打板混仓。"
+        "只盯不改买点闸，不进表一分/7a，也不跟尾盘隔夜仓混仓。"
     )
     src = sc.get("source") or ""
     fetched = sc.get("fetched") or news.get("asof") or ""
@@ -4838,12 +4848,12 @@ def daban_plan(s, q, f, hist, yz, st, line, mood, late=False, yld=False,
 
 
 def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=None, hist=None, hot_lines=None):
-    """尾盘打板：独立仓。尾盘确认后隔夜、次日早盘兑现。不进第0节可以买，不跟游资/趋势/打板混闸。
+    """尾盘隔夜仓：独立仓。尾盘确认后隔夜、次日早盘兑现。不进第0节可以买，不跟游资/趋势/打板混闸。
     两路：①隔夜强势（3%～5%、不涨停，换手5%～10%只加减分，不硬卡）②尾盘二板（昨首板今封死）。
     硬闸：均价下不做、近10日至少1次涨停、近3日资金主线、市值≥400亿、尾盘首板偷鸡不做。"""
     empty = {
-        "in_pool": False, "score": 0, "setup": "非尾盘打板", "call": "观察",
-        "why": "未进尾盘打板池", "bits": [], "sell": "次日09:30-10:00卖：+3%止盈 / -2%止损 / 10:00前清完",
+        "in_pool": False, "score": 0, "setup": "非尾盘隔夜仓", "call": "观察",
+        "why": "未进尾盘隔夜仓池", "bits": [], "sell": "次日09:30-10:00卖：+3%止盈 / -2%止损 / 10:00前清完",
     }
     if not s or not q:
         return empty
@@ -4853,7 +4863,7 @@ def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=
     if is_st(code, name) or code.startswith(("8", "4", "920", "688")):
         return {
             **empty, "in_pool": True, "call": "不买",
-            "why": "ST/北交所/科创不做尾盘打板",
+            "why": "ST/北交所/科创不做尾盘隔夜仓",
         }
     phase = overnight_meal_phase(now)
     chg = q.get("chg") or 0
@@ -4878,23 +4888,23 @@ def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=
     near_high = bool(high and px and px >= high * 0.985)
 
     if yday_dt_shape(q, yld) == "trap":
-        return {**empty, "in_pool": True, "call": "不买", "why": "昨跌停骗炮，尾盘打板不做", "bits": ["骗炮"]}
+        return {**empty, "in_pool": True, "call": "不买", "why": "昨跌停骗炮，尾盘隔夜仓不做", "bits": ["骗炮"]}
     if limit_open_dump(s, q):
         return {**empty, "in_pool": True, "call": "不买", "why": "竞价涨停开后砸盘，不做隔夜", "bits": ["开后砸"]}
     if (mood or {}).get("phase") == "退潮":
-        return {**empty, "in_pool": True, "call": "观察", "why": "情绪退潮，尾盘打板空仓", "bits": ["退潮"]}
+        return {**empty, "in_pool": True, "call": "观察", "why": "情绪退潮，尾盘隔夜仓空仓", "bits": ["退潮"]}
     if st == "回避":
-        return {**empty, "in_pool": True, "call": "观察", "why": "主线回避，尾盘打板不跟支线", "bits": ["回避"]}
+        return {**empty, "in_pool": True, "call": "观察", "why": "主线回避，尾盘隔夜仓不跟支线", "bits": ["回避"]}
     if yi is not None and yi >= BIG_CAP_YI:
         return {
             **empty, "in_pool": True, "call": "不买", "setup": "大盘不做",
-            "why": f"市值{yi:.0f}亿≥{int(BIG_CAP_YI)}亿，尾盘打板不做权重白马（隔夜+3%弹性不够，走第0节趋势仓）",
+            "why": f"市值{yi:.0f}亿≥{int(BIG_CAP_YI)}亿，尾盘隔夜仓不做权重白马（隔夜+3%弹性不够，走第0节趋势仓）",
             "bits": [f"市值{yi:.0f}亿"],
         }
     if vwap is not None and px is not None and px < vwap:
         return {
             **empty, "in_pool": True, "call": "不买", "setup": "均价下不做",
-            "why": "均价下不做隔夜，尾盘打板要求站上分时均价",
+            "why": "均价下不做隔夜，尾盘隔夜仓要求站上分时均价",
             "bits": ["均价下"],
         }
     done_bars = strip_today(hist) if hist else []
@@ -4907,7 +4917,7 @@ def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=
     if not meal_line_ok(line, st, hot_lines):
         return {
             **empty, "in_pool": True, "call": "不买", "setup": "非近3日主线",
-            "why": f"板块{line or '-'}不是近{MEAL_LINE_DAYS}日资金主线，尾盘打板不跟独苗支线",
+            "why": f"板块{line or '-'}不是近{MEAL_LINE_DAYS}日资金主线，尾盘隔夜仓不跟独苗支线",
             "bits": [f"非近{MEAL_LINE_DAYS}日主线"],
         }
 
@@ -4938,7 +4948,7 @@ def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=
     elif today_zt:
         setup = "尾盘首板不做"
         score -= 12
-        bits.append("尾盘首板当偷鸡，尾盘打板不打")
+        bits.append("尾盘首板当偷鸡，尾盘隔夜仓不打")
     else:
         # 杨永兴式：不涨停、涨幅甜区、量比/换手/市值、均价上、贴近当日高
         lo, hi = (3.0, 8.0) if is_20cm(code) else (3.0, 5.0)
@@ -4989,13 +4999,13 @@ def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=
     ok_setup = setup in ("隔夜强势", "尾盘二板") and score >= 70 and not dump
     call, why = "观察", "；".join(bits[:4]) or "形态未进甜区"
     if phase == "wait":
-        call, why = "观察", "尾盘打板窗口 14:30-14:55，现在只初筛"
+        call, why = "观察", "尾盘隔夜仓窗口 14:30-14:55，现在只初筛"
     elif phase == "too_late":
         call, why = "观察", "14:57后不追尾盘脉冲"
     elif phase == "sell":
         call, why = "卖", sell
     elif phase == "off":
-        call, why = "观察", "非尾盘打板买卖窗（买14:30-14:55，卖次日09:30-10:00）"
+        call, why = "观察", "非尾盘隔夜仓买卖窗（买14:30-14:55，卖次日09:30-10:00）"
     elif phase == "buy" and ok_setup:
         call, why = "可尾盘", f"{setup}达标，{sell}"
     elif phase == "buy":
@@ -5270,7 +5280,7 @@ def timing_pred(now, shapes, doable, avoid):
     weak = any(x in ("高开低走", "低开冲高回落", "开后走弱") for x in shapes)
     bits = [
         f"时点：{clk['slot']} {clk['name']}。{clk['action']}",
-        f"本窗口：游资{clk['youzi']} / 趋势{clk['trend']} / 打板{clk['daban']} / 尾盘打板{clk['meal']}",
+        f"本窗口：游资{clk['youzi']} / 趋势{clk['trend']} / 早盘接力仓{clk['daban']} / 尾盘隔夜仓{clk['meal']}",
     ]
     t = now.hour * 60 + now.minute
     if t < 11 * 60 + 30:
@@ -5284,7 +5294,7 @@ def timing_pred(now, shapes, doable, avoid):
     elif t < 14 * 60 + 30:
         bits.append("14:00-14:30是科技日内反抽的常见窗口；没有资金回流就只是弱修复。")
     else:
-        bits.append("14:30后到尾盘不追新高，只看主线资金有没有把早盘流出收住。尾盘打板看第1节。")
+        bits.append("14:30后到尾盘不追新高，只看主线资金有没有把早盘流出收住。尾盘隔夜仓看第1节。")
     if weak:
         bits.append("大盘形态是冲高回落后的修复，时点上偏向做资金还在进的线，不因为自选科技分高就改做科技。")
     if doable:
@@ -5809,7 +5819,7 @@ def explain_analyze(s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
         f"全市场涨停情绪「{phase}」"
         + (f"（涨停{nzt}家）" if nzt else "")
         + "，和主线资金不是同一个条件。"
-        + ("已过14:30或休市，游资/打板不新开。" if late else "盘中时段，仍可按闸排队。")
+        + ("已过14:30或休市，游资/早盘接力仓不新开。" if late else "盘中时段，仍可按闸排队。")
         + "左侧超跌不能替代右侧买点。",
     )
 
@@ -6586,7 +6596,7 @@ def main():
     buy_reason.extend(time_bits)
     clk = buy_clock(now)
     time_bits.append(
-        "尾盘打板单独看第1节：独立仓，14:30-14:55买、次日09:30-10:00卖，不进第0节可以买"
+        "尾盘隔夜仓单独看第1节：独立仓，14:30-14:55买、次日09:30-10:00卖，不进第0节可以买"
     )
     time_bits.append("散户T+1：" + clk["retail"])
 
@@ -6740,7 +6750,7 @@ def main():
             youzi_no.append(f"{s['name']} 7a {yz['score']:.0f}分 {why}")
     if late_youzi:
         youzi_no.append(
-            ("收盘后，游资/打板不新开，这份只当次日预案" if after_close
+            ("收盘后，游资/早盘接力仓不新开，这份只当次日预案" if after_close
              else "14:30后游资只续不新开（7a分不改，仍列出备选）")
         )
     etf_ok = []
@@ -6797,7 +6807,7 @@ def main():
         pick_name, pick_why = r[0], f"趋势仓 表一{r[3]:.0f} 买点{r[7]:.0f} {r[4]}/{r[5]}"
     elif daban_ok:
         r = max(daban_ok, key=lambda x: x[3])
-        pick_name, pick_why = r[0], f"打板仓 {daban_by_code.get(r[7], {}).get('setup') or '战法'} {r[3]:.0f} {r[4]}/{r[5]}"
+        pick_name, pick_why = r[0], f"早盘接力仓 {daban_by_code.get(r[7], {}).get('setup') or '战法'} {r[3]:.0f} {r[4]}/{r[5]}"
     elif youzi_best:
         r = youzi_best[0]
         pick_name, pick_why = r[0], f"游资仓 7a {r[3]:.0f} {r[4]}/{r[5]}"
@@ -6815,7 +6825,7 @@ def main():
     if trend_ok:
         buy_parts.append("趋势 " + "、".join(x[0] for x in trend_ok))
     if daban_ok:
-        buy_parts.append("打板 " + "、".join(x[0] for x in daban_ok))
+        buy_parts.append("早盘接力仓 " + "、".join(x[0] for x in daban_ok))
     if youzi_ok:
         buy_parts.append("游资 " + "、".join(x[0] for x in youzi_ok))
     if etf_ok:
@@ -6830,7 +6840,7 @@ def main():
     # 于是同一份报告第0节说「可以买」、第13节说「不买」。现在统一用同一批过闸名单。
     if buy_bits:
         buy_today = "可小仓"
-        buy_reason.append("综合结论与第0节同一套闸：过闸的是 " + "、".join(buy_bits) + "。尾盘打板只在第1节，不进这里")
+        buy_reason.append("综合结论与第0节同一套闸：过闸的是 " + "、".join(buy_bits) + "。尾盘隔夜仓只在第1节，不进这里")
     elif left_names:
         buy_today = "观察"
         buy_reason.append("综合结论：只有左侧可轻仓试，不算过闸，不开主仓")
@@ -6959,8 +6969,8 @@ def main():
         seen_meal.add(code)
         meal_rows.append({
             "code": code, "name": x.get("name"),
-            "kind": x.get("setup") or "尾盘打板",
-            "call": "可尾盘", "line": "尾盘打板", "st": "",
+            "kind": x.get("setup") or "尾盘隔夜仓",
+            "call": "可尾盘", "line": "尾盘隔夜仓", "st": "",
             "score": x.get("score") or 0,
             "px": x.get("px"), "chg": x.get("chg"),
         })
@@ -7006,7 +7016,7 @@ def main():
         _, htag = heat_pts_of(st, line)
         sl, tp = xit(name)
         setup = (daban_by_code.get(code) or {}).get("setup") or "打板"
-        lines.append(f"| 打板 | {name} | {px:.2f} | {chg:+.2f}% | **可小仓** | {htag} | {setup}·{how} | {sl} | {tp} |")
+        lines.append(f"| 早盘接力仓 | {name} | {px:.2f} | {chg:+.2f}% | **可小仓** | {htag} | {setup}·{how} | {sl} | {tp} |")
     for name, px, chg, sc, line, st, how in youzi_ok:
         n0 += 1
         _, htag = heat_pts_of(st, line)
@@ -7026,16 +7036,16 @@ def main():
         lines.append(f"| 左侧 | {nm} | - | - | **可试仓** | 超跌 | 轻仓，不替代右侧；失败=破今日低 | {sl} | {tp} |")
     if not n0:
         lines.append("| - | 没有 | - | - | **不买** | - | 不开新仓 | - | - |")
-    lines.append("### 0b 打板（今首板不追，昨板接力才看）")
+    lines.append("### 0b 早盘接力仓（今首板不追，昨板接力才看）")
     lines.append("- 今天刚封的**首板默认不追**。能买的只有：昨首板今天冲二（一进二）、昨烂板弱转强、龙头断板回踩（龙回头）。二进三及以上只盯不打。")
-    lines.append("- 尾盘打板/隔夜套利不走这一仓，看 **第1节 尾盘打板**。")
-    lines.append("- 看哪里：本表上面「打板」行；第9节打板排名里「打板闸=可小仓」；首页「今日必买」里带「打板」的名字。")
+    lines.append("- 尾盘隔夜仓不走这一仓，看 **第1节 尾盘隔夜仓**。")
+    lines.append("- 看哪里：本表上面「早盘接力仓」行；第11节打板排名里「打板闸=可小仓」；首页「今日必买」里带「早盘接力仓」的名字。")
     if daban_ok:
-        lines.append("- **本轮打板可小仓：** " + "、".join(
+        lines.append("- **本轮早盘接力可小仓：** " + "、".join(
             f"{x[0]}({(daban_by_code.get(x[7]) or {}).get('setup') or '打板'})" for x in daban_ok
         ))
     else:
-        lines.append("- **本轮打板可小仓：没有。**")
+        lines.append("- **本轮早盘接力可小仓：没有。**")
     daban_watch = []
     for code, db in sorted(daban_by_code.items(), key=lambda kv: -kv[1].get("score", 0)):
         if db.get("call") == "可小仓":
@@ -7061,7 +7071,7 @@ def main():
             ap_txt = f"{ap:+.0f}" if ap else "0"
             sl, tp = xit(r["name"])
             lines.append(
-                f"| {i} | {r['name']} | {r['kind']} | {px} | {r['chg']:+.2f}% | **{r['call']}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
+                f"| {i} | {r['name']} | {display_kind(r['kind'])} | {px} | {r['chg']:+.2f}% | **{r['call']}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
             )
     lines.append("### 备选池（观察/可试仓；热度再高也不进最值得买；止盈止损是预案，未过闸不算仓）")
     lines.append("| 序 | 股票 | 仓 | 价 | 今涨 | 买点 | 竞价 | 主线热度 | 盘面 | 值分 | 角色 | 止损 | 止盈 | 为什么 |")
@@ -7075,7 +7085,7 @@ def main():
             ap_txt = f"{ap:+.0f}" if ap else "0"
             sl, tp = xit(r["name"])
             lines.append(
-                f"| {i} | {r['name']} | {r['kind']} | {px} | {r['chg']:+.2f}% | **{r['call']}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
+                f"| {i} | {r['name']} | {display_kind(r['kind'])} | {px} | {r['chg']:+.2f}% | **{r['call']}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
             )
     # ---- 0c 组合与仓位 ----
     cfgp = pf.get("cfg") or {}
@@ -7093,7 +7103,7 @@ def main():
             nd = 3 if r["kind"] == "ETF" else 2
             rr = f"{r['net_rr']:.1f}" if r.get("net_rr") else "-"
             lines.append(
-                f"| {i} | {r['name']} | {r['kind']} | {r['line']} | {r['px']:.{nd}f} | {r['sl']:.{nd}f} | "
+                f"| {i} | {r['name']} | {display_kind(r['kind'])} | {r['line']} | {r['px']:.{nd}f} | {r['sl']:.{nd}f} | "
                 f"{r['stop_pct']:+.1f}% | {r['shares']} | {r['amt']:.0f} | {r['pct']:.1f}% | "
                 f"{r['risk_amt']:.0f}({r['risk_pct_real']:.2f}%) | {rr} | {r['binding']} |"
             )
@@ -7129,11 +7139,11 @@ def main():
             break
     if high_no:
         lines.append("- 高分但不买：" + "；".join(high_no) + "。分高≠能买")
-    lines.append("- 今日必买以第0节过闸名单为准。TOP5只是可小仓里按值分谁更靠前，值分高不能推翻闸，也不能把出货票洗白。尾盘打板只在第1节，不进今日必买。")
+    lines.append("- 今日必买以第0节过闸名单为准。TOP5只是可小仓里按值分谁更靠前，值分高不能推翻闸，也不能把出货票洗白。尾盘隔夜仓只在第1节，不进今日必买。")
     lines.append("- 今日必买=总闸过了才能开仓。TOP5只排可小仓（按值分）；观察/可试仓再热也只进备选池，不把TOP5凑满。值分：闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价。均线分只拉开能买里谁更稳，不能翻盘。")
     lines.append("- 值分去重：游资/打板/ETF 的盘面分里已含板块资金和竞价质量，值分里主线热度只按0.45计、竞价不再重复加（竞价列显示0即此意，判别仍照常用）；趋势用买点分，不含这两项，全额计。")
     lines.append("- 判别加了滞后带：刚过线要连续两次达标才给可小仓。降级、骗炮、回避立即生效。情绪退潮：打板空仓，游资抬门槛只做低位，趋势不追热，不再一刀切关掉游资。")
-    lines.append("- 打板仓：今首板不追。只做昨首板一进二、昨烂板弱转强、板内龙头回头。昨一字不打。赚钱效应差或情绪退潮时打板不新开。打板可小仓不要求 7a。")
+    lines.append("- 早盘接力仓：今首板不追。只做昨首板一进二、昨烂板弱转强、板内龙头回头。昨一字不打。赚钱效应差或情绪退潮时不新开。可小仓不要求 7a。")
     lines.append("- 竞价涨停/近板开后砸盘→不买（出货）。竞价质量已并入各战法盘面分；量比和换手都按时段归一（早盘成交前置，10:00的量比1.5不等于14:30的1.5）。")
     lines.append("- 表一看「买点」列：可小仓=能买，观察=盯着，不买/不追=不能买。分只是均线健康。")
     miss_q = [x["name"] for x in stocks + etfs if not live.get(x["code"])]
@@ -7147,10 +7157,10 @@ def main():
             bits.append("口径备注：" + "、".join(FLOW_STALE) + "（同交易日已成功缓存，不是昨收delay）")
         lines.append("- **数据完整性**：" + "；".join(bits) + "。取数失败的票结论不可用，别当成「没信号」。")
 
-    # ---- 1 尾盘打板（独立仓） ----
-    lines.append("## 1 尾盘打板（独立仓：尾盘买、次日早盘卖；不进第0节今日必买）")
+    # ---- 1 尾盘隔夜仓（独立仓） ----
+    lines.append("## 1 尾盘隔夜仓（独立仓：尾盘买、次日早盘卖；不进第0节今日必买）")
     lines.append(
-        "跟游资/打板/趋势分开，单独一套闸，不混仓、不进今日必买。游资14:30后不新开；尾盘打板反过来，闸窗 **14:30–14:57**，买点钟主买 **14:40–14:55**（14:30先看盘）。"
+        "跟游资/早盘接力仓/趋势分开，单独一套闸，不混仓、不进今日必买。游资14:30后不新开；尾盘隔夜仓反过来，闸窗 **14:30–14:57**，买点钟主买 **14:40–14:55**（14:30先看盘）。"
         "核心：尾盘确认资金还在、不追尾盘偷鸡首板、次日 **09:31–09:50 冲高卖、10:00前了结**。"
         "两路：①隔夜强势=今涨3%～5%（20cm到8%）、未涨停、量比≥1.2、换手5%～10%加减分、流通50～200亿加分、均价上方、贴近当日高；"
         "②尾盘二板=昨首板今封死、换手8%～18%、不是烂板/跳水、贴主线。"
@@ -7159,12 +7169,12 @@ def main():
     )
     lines.append(
         f"- 当前窗口：**{meal_phase}**"
-        + {"buy": "（14:30-14:55，可以下尾盘打板；14:40后更稳）", "too_late": "（14:57后不追）",
+        + {"buy": "（14:30-14:55，可以下尾盘隔夜仓；14:40后更稳）", "too_late": "（14:57后不追）",
            "sell": "（次日早盘，只卖不买）", "wait": "（等到14:30再扫）",
            "off": "（休市/盘前/收盘后，未买则错过）"}.get(meal_phase, "")
     )
     lines.append("- 卖出纪律：冲高约+3%止盈；开盘约-2%止损；平开/无力翻红 **10:00前清完**。一字涨停可暂留，其余不隔第二夜。")
-    lines.append("- 跟游资「上午买下午卖」不是同一仓：游资下午卖的是当天席位T+0；散户买尾盘打板是尾盘买、次日早盘卖。")
+    lines.append("- 跟游资「上午买下午卖」不是同一仓：游资下午卖的是当天席位T+0；散户买尾盘隔夜仓是尾盘买、次日早盘卖。")
     if meal_phase == "buy" and meal_ok:
         lines.append("| 序 | 股票 | 战法 | 分 | 价 | 今涨 | 买点 | 为什么 | 次日怎么卖 |")
         lines.append("|---|---|---|---|---|---|---|---|---|")
@@ -7174,7 +7184,7 @@ def main():
                 f"{r['chg']:+.2f}% | **可尾盘** | {r['why']} | {r['sell']} |"
             )
     elif meal_phase == "buy":
-        lines.append("- **本轮尾盘打板可买：没有。** 宁缺毋滥。")
+        lines.append("- **本轮尾盘隔夜仓可买：没有。** 宁缺毋滥。")
     if meal_hold_picks:
         tag = "次日早盘应卖" if meal_phase == "sell" else "若已成交则持有待卖"
         lines.append(f"- **{tag}：** " + "、".join(
@@ -7187,7 +7197,7 @@ def main():
         tag = "14:30待确认" if meal_phase == "wait" else "在池未过闸"
         lines.append(f"- **{tag}：** " + "；".join(meal_watch))
     lines.append("")
-    # ---- 胜率追踪：今日必买 / 尾盘打板 分开；对照表不是买点 ----
+    # ---- 胜率追踪：今日必买 / 尾盘隔夜仓 分开；对照表不是买点 ----
     rv = review or {}
     bt = rv.get("buy_track") or {}
     mt = rv.get("meal_track") or {}
@@ -7221,12 +7231,12 @@ def main():
 
     def _call_mean(key):
         return {
-            "可小仓": "真开仓",
-            "可试仓": "真开仓（更轻）",
-            "观察": "对照，不是买点",
-            "不追": "对照（过热没追）",
-            "不买": "对照，不是买点",
-        }.get(key, "对照")
+            "可小仓": "当时买了",
+            "可试仓": "当时买了（更轻）",
+            "观察": "当时没买",
+            "不追": "当时没追",
+            "不买": "当时没买",
+        }.get(key, "当时没买")
 
     def _disc_look(by_call):
         buy = next((r for r in by_call if r.get("key") == "可小仓"), None)
@@ -7249,11 +7259,15 @@ def main():
         bits.append("3日/5日要等样本走过才有数。复盘只用来改阈值，不参与今天的判别。")
         return " ".join(bits)
 
-    lines.append("## 胜率追踪-今日必买")
+    lines.append("## 2 胜率追踪-今日必买")
     lines.append(
-        "第0节真开仓的成绩单，和尾盘打板分开。**只有可小仓是你按闸买过的票。**"
-        "下面「对照」里观察/不买/不追的胜率，是**假如当时买了**会怎样，用来检查闸有没有用，不是买点。"
-        "都不改今天的闸。"
+        "这一节只复盘，不改今天的闸。两块不要混。"
+        "**真开仓**=第0节给过「可小仓」的票，你按闸买了才算这一笔。"
+        "胜负怎么算：成交价买进 → 次日收盘卖掉（A股T+1），扣成本后赚钱=胜、亏钱=负。隔夜涨跌只是参考，不是胜负。"
+        "**对照**=当时写「观察 / 不买 / 不追」的票，闸没让你买；这里假装买了，看次日收盘赚不赚钱。"
+        "对照用来检查闸有没有把更好的留下来，不是买点。"
+        "不买/不追的「胜率」高，只说明被挡掉的票次日也常涨（涨停惯性尤其如此），不是该买、也不是该追。"
+        "可小仓该打赢观察；打不赢去改阈值，不要去买观察。"
     )
     cost_txt = bt.get("cost_pct", rv.get("cost_pct", 0.1))
     _track_block(
@@ -7269,11 +7283,14 @@ def main():
     lines.append("### 对照：假如当时买了（不是推荐）")
     if rv.get("n_eval"):
         lines.append(
-            f"口径：第0节全部判别留档 {rv['n_rec']} 条、已可评估 {rv['n_eval']} 条；"
-            f"不管当时是可小仓还是观察/不买/不追，都用**信号当时价→之后第1/3/5个交易日收盘**，已扣成本{rv.get('cost_pct')}%。"
-            "不含尾盘打板。观察65%、不买65%不等于该买，只说明这些票次日也有人赚钱，闸有没有把更好的留下来。"
+            f"口径：第0节全部判别留档 {rv['n_rec']} 条、已可评估 {rv['n_eval']} 条。"
+            "不管当时闸说可小仓还是观察/不买/不追，都用**当时价 → 之后第1/3/5个交易日收盘**，"
+            f"扣成本{rv.get('cost_pct')}%后赚钱就算这一格的「胜」。"
+            "不含尾盘隔夜仓。"
+            "所以「不买 65%」不是不买也能赢，是：**假如当时违闸买了**，这批票里有 65% 次日收盘还是赚的。"
+            "「不追」同理：过热没追，涨停惯性会让这格看起来很赚，不能拿来推翻今涨停不追。"
         )
-        lines.append("| 当时结论 | 含义 | 样本 | 假如买入次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
+        lines.append("| 当时闸怎么说 | 你当时买了没 | 样本 | 假如买了次日赚钱的比例 | 次日均收 | 3日均收 | 5日均收 |")
         lines.append("|---|---|---|---|---|---|---|")
         for r in rv.get("by_call") or []:
             a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
@@ -7286,22 +7303,34 @@ def main():
             )
         by_kind = [r for r in (rv.get("by_kind") or []) if r["key"].startswith(("可小仓", "可试仓"))]
         if by_kind:
-            lines.append("| 真开仓/战法 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
+            lines.append("### 按仓拆开（还是上面那批可小仓，不是另一套胜率）")
+            lines.append(
+                "把真开仓再按仓切开：可小仓/趋势、可小仓/游资、可小仓/早盘接力仓。"
+                "跟上面「真开仓」是同一批票，只是看哪一种仓更赚钱。"
+            )
+            lines.append("| 仓 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
             lines.append("|---|---|---|---|---|---|")
             for r in by_kind[:8]:
                 a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
                 a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
                 ntxt = f"{r['n']}" + (" 少" if r["n"] < 8 else "")
+                k = r["key"]
+                if "/" in k:
+                    a, b = k.split("/", 1)
+                    k = f"{a}/{display_kind(b)}"
                 lines.append(
-                    f"| {r['key']} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
+                    f"| {k} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
                 )
         lines.append("- 看法：" + _disc_look(rv.get("by_call") or []))
     else:
         lines.append(f"- 对照表要等隔一个交易日才有可评估样本（本次新增 {n_j} 条）。")
     lines.append("")
 
-    lines.append("## 胜率追踪-尾盘打板")
-    lines.append("第1节独立仓的成绩单，不进今日必买，也不跟第0节闸混在一张表里。")
+    lines.append("## 3 胜率追踪-尾盘隔夜仓")
+    lines.append(
+        "第1节独立仓的成绩单，不进今日必买，也不跟第0节闸混在一张表里。"
+        "胜负口径见上面「真开仓」：第一次可尾盘记一笔；隔夜看次日开，收盘胜率看到次日收只作对照。"
+    )
     _track_block(
         "真开仓（第一次可尾盘）",
         "口径：每个交易日每只票只记**第一次可尾盘**。14:30后入选价=当时尾盘价，不改成次日开。"
@@ -7314,7 +7343,7 @@ def main():
     )
     lines.append("")
 
-    lines.append("## 2 板块资金")
+    lines.append("## 4 板块资金")
     flow_src = "盘中实时" if cn_flow_live() else "休市/竞价=昨收最新（live 优先，连不上再用 delay）"
     lines.append(
         f"口径：东财行业主力净流入（估算）。{flow_src}。"
@@ -7360,7 +7389,7 @@ def main():
         lines.append("- 相关ETF/指数：" + "；".join(etf_heat))
     lines.append("- 东财暗盘/板块资金是模型估算，不是交易所盘前成交。")
     lines.append("")
-    lines.append("## 3 集合竞价")
+    lines.append("## 5 集合竞价")
     lines.append("框架：开幅（高开/低开）+ 竞价量比（首分钟量÷20日均分钟量）+ 开后是否站开盘 + 高低位。主流量价：高开放量偏抢筹，高开缩量/破开盘偏骗炮，低开放量偏砸，低开翻红看承接。9:15-9:20可撤单噪声大，开盘价以9:25撮合为准；开后3-5分钟再验证。")
     auc_rank = {"抢筹强": 0, "承接关注": 1, "正常": 2, "砸盘弱": 3, "骗炮警惕": 4, "竞价缺": 5}
     auc_rows = []
@@ -7404,7 +7433,7 @@ def main():
             return "上20"
         return "弱"
 
-    lines.append(f"## 4 个股一览（全池{len(t1_all)}只，趋势{n_trend}+游资{n_youzi}）")
+    lines.append(f"## 6 个股一览（全池{len(t1_all)}只，趋势{n_trend}+游资{n_youzi}）")
     lines.append("买点=今日必买。分=均线健康。买点分=九列。值分=闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价±3。买点分不重复加。竞价列只展示判断，不单独改买点。表一买点与明细标的相同，只保留明细（含买点表多出来的竞价/值序/为什么）。")
     lines.append("### 表一明细（买点+均线九列）")
     lines.append("| 序 | 股票 | 买点 | 竞价 | 类型 | 现价 | 今涨 | 分 | 买点分 | 值分 | 值序 | 均线 | 量比 | 距20日高 | 斜率 | 回踩 | 相对强度 | 板块RS | 量价 | ORB | 昨高 | 布林 | 换手分位 | 仓位 | 为什么 |")
@@ -7457,13 +7486,13 @@ def main():
     if not etf_t1:
         lines.append("| - | ETF报价暂缺 | - | - | - | - | - | - | - | - | - | - | - | - | - |")
     lines.append("")
-    lines.append("## 5 趋势复核")
+    lines.append("## 7 趋势复核")
     if pick_lines:
         lines.extend("- " + x for x in pick_lines)
     else:
         lines.append("- 无合格筛选结果")
     lines.append("")
-    lines.append("## 6 游资打分")
+    lines.append("## 8 游资打分")
     lines.append("因子（7项+追高罚）：板块资金0.10｜资金合成0.30（今主力+5日+涨幅同向，同一口径合并计一次）｜游资弹性0.18（小市值+归一量比+振幅）｜涨停空间0.10｜竞价质量0.12｜低位启动0.10｜承接质量0.10（分时均价+封单额/封成比+开板次数）。量比已按时段归一，早盘不再天然高分。")
     lines.append(mood.get("txt") or "情绪：暂缺")
     lines.append("换手/竞价量/弱转强/超大单/题材板/昨龙虎/连板/昨ZT溢价/板内排名/竞价额/换手市值是加列和环境，不进 7 因子分、不改怎么做。")
@@ -7520,10 +7549,10 @@ def main():
             hint = "7a已过65，挡在门外的是总闸（回避/量能/追高等），不是分数不够"
         lines.append(f"- 新易盛：7a {yz['score']:.0f}，买点 **{call}**（{why}）。{hint}。")
     lines.append("")
-    lines.append("## 7 左侧超跌")
+    lines.append("## 9 左侧超跌")
     lines.append("进池/左侧分仍是原公式：乖离/RSI/距前高超跌 + 收阳或长下影止跌 + 放量承接。斐波那契只标注。趋势可试仓额外要求：均线走平、且 RSI拐头或缩量再放量或二探不破；大盘偏弱则趋势票只观察。游资左侧不要求均线走平。失败：破今日低或 ATR。类型列区分趋势/游资。")
     left_merged = left_ranked
-    lines.append(f"### 8 左侧超跌（趋势{len(left_trend)}+游资{len(left_youzi)}，共{len(left_merged)}只）")
+    lines.append(f"### 分池（趋势{len(left_trend)}+游资{len(left_youzi)}，共{len(left_merged)}只）")
     lines.append("| 序 | 股票 | 类型 | 位置 | 斐波那契 | 止跌确认 | 左侧确认 | 主线 | 左侧分 | 判断 | 怎么做 |")
     lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
     if not left_merged:
@@ -7536,7 +7565,7 @@ def main():
                 f"| {n} | {s['name']} | {ls['kind']} | {ls['pos']} | {ls.get('fib') or '-'} | {ls['factor']} | {ls.get('confirm') or '-'} | {ls['line']}/{ls['line_st']} | **{ls['score']:.0f}** | **{ls['call']}** | {ls['how']} |"
             )
     lines.append("")
-    lines.append("## 8 暗盘资金")
+    lines.append("## 10 暗盘资金")
     lines.append("口径：个股今主力/超大单/5日主力代理（东财估算），不是交易所盘前暗盘成交。流入=今主力>0，流出=今主力<0。")
     yz_flow = sorted(yz_youzi, key=lambda r: -((r[4].get("main") or 0)))
     lines.append("### 暗盘资金流入")
@@ -7565,7 +7594,7 @@ def main():
         lines.append("| - | 游资池暂无主力净流出 | - | - | - | - | - | - | - | - | - |")
     lines.append("- 涨但主力出=出货嫌疑，7a会降怎么做；暗盘流入≠可买，仍过第0节闸。")
     lines.append("")
-    lines.append("## 9 重点跟踪")
+    lines.append("## 11 重点跟踪")
     if key_lines:
         lines.extend("- " + x for x in key_lines)
     else:
@@ -7602,20 +7631,20 @@ def main():
     else:
         lines.append("- 打板可小仓：没有。宁缺毋滥。")
     lines.append("")
-    lines.append("## 10 主线方向")
+    lines.append("## 12 主线方向")
     lines.append("- 口径：板块冷/热看东财行业主力净流入，不是看涨幅热门。回避=该线自己资金净出。亨通跟CPO，和光模块放在光通信；东财通信线缆流出不把CPO打冷。元件/PCB流出不连坐光通信、半导体、液冷。三花=热管理。中材=玻纤。太极=半导体封测。")
     lines.extend("- " + x for x in line_block)
     lines.append("")
-    lines.append("## 11 个股对照")
+    lines.append("## 13 个股对照")
     if overlay_lines:
         lines.extend("- " + x for x in overlay_lines)
     else:
         lines.append("- 无")
     lines.append("")
-    lines.append("## 12 今日时点")
+    lines.append("## 14 今日时点")
     lines.extend("- " + x for x in time_bits)
     lines.append("")
-    lines.append("## 13 买点明细")
+    lines.append("## 15 买点明细")
     lines.append(f"**综合结论：{buy_today}**")
     if pick_name:
         lines.append(f"**最适合买：{pick_name}（{pick_why}）**")
@@ -7644,7 +7673,7 @@ def main():
         n_buy_rows += 1
         fit = "首选" if pick_name == name else "可买"
         sl, tp = xit(name)
-        lines.append(f"| 打板 | {name} | {px:.2f} | {chg:+.2f}% | 打板{sc:.0f} | {line}/{st} | {how} | {fit} | **可小仓** | {sl} | {tp} |")
+        lines.append(f"| 早盘接力仓 | {name} | {px:.2f} | {chg:+.2f}% | 打板{sc:.0f} | {line}/{st} | {how} | {fit} | **可小仓** | {sl} | {tp} |")
     for name, px, chg, sc, line, st, how in youzi_ok:
         n_buy_rows += 1
         fit = "尾盘不新开" if late_youzi else mark_row(name, youzi_best)
@@ -7664,7 +7693,7 @@ def main():
     if not n_buy_rows:
         lines.append("| - | 没有同时满足分层条件的票 | - | - | - | - | 表一可小仓+主线未回避；或打板分≥75一进二/弱转强；或7a≥65；或表三可试仓 | - | **不买** | - | - |")
     lines.append("")
-    lines.append("总判规则：趋势=表一可小仓且主线不是回避；打板=今首板不追，昨首板一进二/弱转强/龙回头才可能可小仓；游资=7a过门槛（资金缺72/退潮75，平时65）、未涨停见顶、主线不是回避；ETF同主线回避也降观察；左侧=轻仓试。最适合买：趋势 > 打板 > 游资 > ETF > 左侧。今涨停不追。昨跌停骗炮才不买，弱转强放宽为低开翻红站住均价。尾盘打板见第1节，不进本表。")
+    lines.append("总判规则：趋势=表一可小仓且主线不是回避；早盘接力仓=今首板不追，昨首板一进二/弱转强/龙回头才可能可小仓；游资=7a过门槛（资金缺72/退潮75，平时65）、未涨停见顶、主线不是回避；ETF同主线回避也降观察；左侧=轻仓试。最适合买：趋势 > 早盘接力仓 > 游资 > ETF > 左侧。今涨停不追。昨跌停骗炮才不买，弱转强放宽为低开翻红站住均价。尾盘隔夜仓见第1节，不进本表。")
     if trend_let:
         lines.append("- 同主线趋势让出：" + "、".join(x[0] for x in trend_let))
     if youzi_let:
@@ -7695,19 +7724,19 @@ def main():
         lines.append(f"- {r}")
     lines.append("- 不代下单、不要账号。")
     lines.append("")
-    lines.append("## 14 买点钟（游资/趋势/打板/尾盘打板各有窗口）")
+    lines.append("## 16 买点钟（游资/趋势/早盘接力仓/尾盘隔夜仓各有窗口）")
     lines.append(
         f"**现在：{clk['slot']}　{clk['name']}。{clk['action']}**"
     )
     now_act = style_now_action(now)
     lines.append(
-        f"- 本窗口动作：游资 **{clk['youzi']}** · 趋势 **{clk['trend']}** · 打板 **{clk['daban']}** · 尾盘打板 **{clk['meal']}**"
+        f"- 本窗口动作：游资 **{clk['youzi']}** · 趋势 **{clk['trend']}** · 早盘接力仓 **{clk['daban']}** · 尾盘隔夜仓 **{clk['meal']}**"
     )
     lines.append(
         f"- 现在买卖：游资买 {now_act['youzi_buy']} / 卖旧仓 {now_act['youzi_sell']}；"
         f"趋势买 {now_act['trend_buy']} / 卖 {now_act['trend_sell']}；"
-        f"打板买 {now_act['daban_buy']} / 卖旧仓 {now_act['daban_sell']}；"
-        f"尾盘打板买 {now_act.get('meal_buy') or clk['meal']} / 卖 {now_act.get('meal_sell') or '-'}"
+        f"早盘接力仓买 {now_act['daban_buy']} / 卖旧仓 {now_act['daban_sell']}；"
+        f"尾盘隔夜仓买 {now_act.get('meal_buy') or clk['meal']} / 卖 {now_act.get('meal_sell') or '-'}"
     )
     lines.append("| 仓 | 买（胜率相对高） | 这时不买 | 卖（胜率相对高） | 拿多久 |")
     lines.append("|---|---|---|---|---|")
@@ -7731,17 +7760,17 @@ def main():
         "卖按结构：冲高 09:45–10:15 减、破计划位立刻走、主线走弱次日早盘清。"
     )
     lines.append(
-        "- 打板真开仓：只做昨板接力 **09:32–09:50**（不炸）或弱转强 **09:35–10:00**。今首板和尾盘偷鸡不做。"
+        "- 早盘接力仓真开仓：只做昨板接力 **09:32–09:50**（不炸）或弱转强 **09:35–10:00**。今首板和尾盘偷鸡不做。"
         "次日不封/开板 **09:30–09:45 走**。未晋级不隔第二夜。"
     )
     lines.append(
-        "- 尾盘打板/隔夜套利真开仓：独立仓，只做 **14:40–14:55**（14:30–14:40先看盘，不抢假拉；14:57收盘集合不追）。"
+        "- 尾盘隔夜仓真开仓：独立仓，只做 **14:40–14:55**（14:30–14:40先看盘，不抢假拉；14:57收盘集合不追）。"
         "必须过第1节可尾盘：隔夜强势或尾盘二板；均价下/近10日无涨停/非近3日主线不做；不做尾盘首板偷鸡。"
         "次日 **09:31–09:50 冲高卖**（大约+3%走），低开/开板 **09:30–09:35 先走**（大约-2%），最晚 **10:00 清完**。"
         "竞价可以挂卖。一字涨停可暂留，其余不隔第二夜。不进第0节可以买。"
     )
     lines.append("- 散户T+1：" + clk["retail"])
-    lines.append("- 只标钟，不改第0节闸，也不把尾盘打板写进今日必买：过闸才能买，没过闸这个钟不能把观察票洗成今日必买。")
+    lines.append("- 只标钟，不改第0节闸，也不把尾盘隔夜仓写进今日必买：过闸才能买，没过闸这个钟不能把观察票洗成今日必买。")
     lines.append("")
     out = "\n".join(lines)
     os.makedirs(os.path.join(ROOT, "reports"), exist_ok=True)
@@ -7989,22 +8018,22 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         "<nav class=toc>",
         "<a href='#snews'>最新资讯</a>",
         "<a href='#s0'>0 今日必买</a>",
-        "<a href='#s1'>1 尾盘打板</a>",
-        "<a href='#swin'>胜率追踪-今日必买</a>",
-        "<a href='#swin-meal'>胜率追踪-尾盘打板</a>",
-        "<a href='#s2'>2 板块资金</a>",
-        "<a href='#s3'>3 集合竞价</a>",
-        "<a href='#s4'>4 个股一览</a>",
-        "<a href='#s5'>5 趋势复核</a>",
-        "<a href='#s6'>6 游资打分</a>",
-        "<a href='#s7'>7 左侧超跌</a>",
-        "<a href='#s8'>8 暗盘资金</a>",
-        "<a href='#s9'>9 重点跟踪</a>",
-        "<a href='#s10'>10 主线方向</a>",
-        "<a href='#s11'>11 个股对照</a>",
-        "<a href='#s12'>12 今日时点</a>",
-        "<a href='#s13'>13 买点明细</a>",
-        "<a href='#s14'>14 买点钟</a>",
+        "<a href='#s1'>1 尾盘隔夜仓</a>",
+        "<a href='#s2'>2 胜率追踪-今日必买</a>",
+        "<a href='#s3'>3 胜率追踪-尾盘隔夜仓</a>",
+        "<a href='#s4'>4 板块资金</a>",
+        "<a href='#s5'>5 集合竞价</a>",
+        "<a href='#s6'>6 个股一览</a>",
+        "<a href='#s7'>7 趋势复核</a>",
+        "<a href='#s8'>8 游资打分</a>",
+        "<a href='#s9'>9 左侧超跌</a>",
+        "<a href='#s10'>10 暗盘资金</a>",
+        "<a href='#s11'>11 重点跟踪</a>",
+        "<a href='#s12'>12 主线方向</a>",
+        "<a href='#s13'>13 个股对照</a>",
+        "<a href='#s14'>14 今日时点</a>",
+        "<a href='#s15'>15 买点明细</a>",
+        "<a href='#s16'>16 买点钟</a>",
         "</nav><div class=page>",
     ]
     lines = md.replace("\r\n", "\n").split("\n")
@@ -8041,10 +8070,6 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
                 hid = f"s{m.group(1)}"
             elif title_txt.startswith("最新资讯"):
                 hid = "snews"
-            elif title_txt.startswith("胜率追踪-尾盘"):
-                hid = "swin-meal"
-            elif title_txt.startswith("胜率追踪"):
-                hid = "swin"
             else:
                 hid = ""
             parts.append(f"<h2 id='{hid}'>{inline_md(title_txt)}</h2>")
@@ -8196,7 +8221,7 @@ if __name__ == "__main__":
         n = style_now_action(t(13, 10))
         assert "第二买点" in n["trend_buy"], n
         books = style_books()
-        assert [b["kind"] for b in books] == ["游资", "趋势", "打板", "尾盘打板"]
+        assert [b["kind"] for b in books] == ["游资", "趋势", "早盘接力仓", "尾盘隔夜仓"]
         n = style_now_action(t(14, 45))
         assert "主买" in n["meal_buy"], n
         n = style_now_action(t(14, 35))
@@ -8214,15 +8239,22 @@ if __name__ == "__main__":
         assert c["name"] == "尾盘观察", c
         c = buy_clock(t(14, 45))
         assert c["youzi"] == "不新开" and c["meal"].startswith("真开仓"), c
-        assert any(x[1] == "尾盘打板主买" for x in c["table"]), c["table"]
+        assert any(x[1] == "尾盘隔夜仓主买" for x in c["table"]), c["table"]
         c = buy_clock(t(11, 40))
         assert c["name"] == "午休", c
         src = open(__file__, encoding="utf-8").read()
         gen = src.split('if __name__')[0]
-        assert gen.find("## 14 买点钟") > gen.find("## 13 买点明细")
-        assert gen.find("## 胜率追踪-今日必买") > gen.find("## 1 尾盘打板")
-        assert gen.find("## 胜率追踪-尾盘打板") > gen.find("## 胜率追踪-今日必买")
-        assert gen.find("## 2 板块资金") > gen.find("## 胜率追踪-尾盘打板")
+        assert gen.find("## 16 买点钟") > gen.find("## 15 买点明细")
+        assert gen.find("## 2 胜率追踪-今日必买") > gen.find("## 1 尾盘隔夜仓")
+        assert gen.find("## 3 胜率追踪-尾盘隔夜仓") > gen.find("## 2 胜率追踪-今日必买")
+        assert gen.find("## 4 板块资金") > gen.find("## 3 胜率追踪-尾盘隔夜仓")
+        assert gen.find("## 6 个股一览") > gen.find("## 5 集合竞价")
+        assert gen.find("## 7 趋势复核") > gen.find("## 6 个股一览")
+        assert "### 0b 早盘接力仓" in gen
+        assert "1 尾盘打板" not in gen
+        assert "胜率追踪-尾盘打板" not in gen
+        assert display_kind("打板") == "早盘接力仓"
+        assert display_kind("趋势") == "趋势"
         assert "### 0d 可以买跟踪" not in gen
         assert "### 0a 买点钟" not in gen
         assert "### 0e 最新资讯" not in gen

@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,interactive-widget=resizes-content">
+  <title>今日自选</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <meta name="theme-color" content="#111110">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#111110; --card:#1c1c1a; --ink:#f2f1ec; --muted:#9a9890; --line:rgba(242,241,236,.12);
+      --ice:#c5c2b6; --ink2:#111110; --ok:#6fba8d; --bad:#d67a7a; --watch:#c4b48a;
+      --font:"Noto Sans SC","PingFang SC","Hiragino Sans GB",sans-serif;
+      --mono:"IBM Plex Mono","Noto Sans SC",ui-monospace,monospace;
+    }
+    * { box-sizing:border-box; }
+    html { -webkit-text-size-adjust:100%; }
+    html, body { margin:0; height:100%; height:100dvh; color:var(--ink); font-family:var(--font);
+      overflow:hidden; background:var(--bg); }
+    .layout { height:100%; display:flex; flex-direction:column; min-height:0; }
+    .top { flex:0 0 auto; position:relative; z-index:5;
+      padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;
+      border-bottom:1px solid var(--line); background:#111110; }
+    .brand { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+    .head-left { flex:0 0 auto; }
+    .head-right { flex:1 1 320px; min-width:0; display:flex; justify-content:flex-end; align-items:flex-start; }
+    .ovn-news { width:min(560px, 100%); max-width:100%; text-align:left; font-size:11px; line-height:1.35;
+      color:var(--muted); }
+    .ovn-news b { display:block; color:#c5c2b6; font-weight:650; margin:0 0 4px; letter-spacing:.06em; font-size:11px; }
+    .ovn-news ul { margin:0; padding:0; list-style:none;
+      display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:2px 16px; }
+    .ovn-news li { padding:1px 0 1px 10px; position:relative; overflow-wrap:anywhere; }
+    .ovn-news li::before { content:""; position:absolute; left:0; top:.55em; width:4px; height:4px;
+      border-radius:50%; background:#6a6860; }
+    .eyebrow { font-size:12px; letter-spacing:.12em; color:var(--ice); margin:0 0 4px; font-weight:600; }
+    .top h1 { margin:0; font-size:22px; font-weight:700; letter-spacing:0; color:#fff; line-height:1.4; }
+    .clock { margin:6px 0 0; font-family:var(--mono); font-size:15px; font-weight:500; color:#c5c2b6;
+      letter-spacing:.08em; line-height:1.5; font-variant-numeric:tabular-nums; }
+    .toggle { background:#2a2a28; color:#fff; border:0;
+      border-radius:10px; padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600;
+      min-height:44px; white-space:nowrap; }
+    .toggle.alt { background:#f2f1ec; color:#111110; }
+    .ok { color:var(--ok); } .bad { color:var(--bad); } .watchc { color:var(--watch); }
+    .meta { color:var(--muted); font-size:13px; margin:4px 0 0; line-height:1.5; }
+    .meta b { color:#fff; font-family:var(--mono); font-weight:500; letter-spacing:.04em; }
+    .toolbar { display:flex; gap:8px; align-items:center; margin:8px 0 0; flex-wrap:wrap; }
+    .toolbar input { flex:0 1 120px; min-width:96px; background:#111110; color:#fff;
+      border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:16px;
+      min-height:44px; }
+    .toolbar input:focus { outline:none; border-color:var(--ice); }
+    .toolbar .act { flex:0 0 auto; }
+    .idx-tape { display:flex; flex-wrap:wrap; gap:2px 10px; align-items:center;
+      justify-content:flex-start; min-width:0; flex:1 1 200px; margin:0; }
+    .idx-chip {
+      font-family:var(--mono); font-size:12px; line-height:1.3;
+      padding:0; border:0; background:transparent; border-radius:0;
+      color:#c5c2b6; white-space:nowrap; font-variant-numeric:tabular-nums;
+      flex:0 0 auto; align-self:center;
+    }
+    .idx-chip .n { color:var(--muted); margin-right:4px; font-weight:600; letter-spacing:.02em; }
+    .idx-chip .p { color:#f2f1ec; margin-right:3px; font-weight:500; }
+    .idx-chip.up { color:#d67a7a; }
+    .idx-chip.dn { color:#6fba8d; }
+    .idx-chip.flat { color:#c5c2b6; }
+    .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(118px, 1fr)); gap:8px;
+      margin:10px 0 4px; align-items:stretch; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+      padding:8px 10px; min-width:0; }
+    #cards .card { min-height:108px; display:flex; flex-direction:column; }
+    .card .k { font-size:12px; color:var(--muted); }
+    .card .when { font-size:11px; color:#c5c2b6; margin-top:2px; line-height:1.35; }
+    #cards .card .v { flex:1; font-size:13px; }
+    .card .v { font-size:14px; font-weight:650; margin-top:6px; line-height:1.4;
+      overflow-wrap:anywhere; color:#fff; }
+    .links { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; margin:6px 0 0; align-items:center; }
+    .scan { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin:8px 0 10px; }
+    .scan h3 { margin:0 0 10px; font-size:18px; line-height:1.4; }
+    .scan .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
+    .scan .why { color:var(--muted); font-size:14px; margin-top:10px; line-height:1.7; overflow-wrap:anywhere; white-space:pre-wrap; }
+    .scan .why b { color:#fff; font-weight:700; margin-right:8px; }
+    .scan .why b.bad { color:var(--bad); }
+    .scan .why-h { color:var(--ice); font-size:13px; font-weight:650; margin:16px 0 2px; }
+    .drawer { display:none; position:fixed; top:0; right:0; width:min(440px,100vw); height:100%;
+      background:#111110; border-left:1px solid var(--line); z-index:2147483600; overflow:auto;
+      padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(88px + env(safe-area-inset-bottom,0px)); }
+    .drawer.on { display:block; }
+    .drawer h2 { margin:0 0 10px; font-size:20px; line-height:1.4; }
+    .drawer .close { float:right; background:#f2f1ec; color:#111110; border:0; border-radius:10px;
+      padding:8px 12px; cursor:pointer; min-height:40px; font-weight:650; }
+    .links a { color:var(--ice); text-decoration:none; }
+    .links a:hover { text-decoration:underline; text-underline-offset:3px; }
+    iframe { width:100%; height:100%; border:0; background:#111110; display:block; position:relative; z-index:0; }
+    .report-flow { display:none; flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; background:#111110; }
+    .stage { flex:1; min-height:0; position:relative; z-index:0; isolation:isolate; display:flex; flex-direction:column; }
+    .panel { display:none; flex:1; min-height:0; overflow:auto; }
+    .panel.on { display:flex; flex-direction:column; }
+    #panel-watch.on { display:block; }
+    .wrap { max-width:1100px; margin:0 auto; padding:16px 16px calc(48px + env(safe-area-inset-bottom,0px)); }
+    .sub { color:var(--muted); font-size:14px; margin:0 0 14px; line-height:1.6; }
+    .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:var(--card);
+      border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:16px; }
+    input, select { background:#111110; color:var(--ink); border:1px solid var(--line);
+      border-radius:10px; padding:9px 10px; font-size:16px; font-family:var(--font); }
+    input[name=code] { width:160px; }
+    input[name=board] { width:140px; }
+    button.act { background:#f2f1ec; color:#111110; border:0; border-radius:10px; padding:10px 14px;
+      font-size:14px; cursor:pointer; font-weight:650; min-height:44px; white-space:nowrap;
+      touch-action:manipulation; -webkit-tap-highlight-color:rgba(242,241,236,.2);
+      position:relative; z-index:6; }
+    .toggle { touch-action:manipulation; -webkit-tap-highlight-color:rgba(242,241,236,.2);
+      position:relative; z-index:6; }
+    button.act.warn { background:transparent; color:#f2f1ec; border:1px solid rgba(242,241,236,.35); }
+    button.danger { background:transparent; color:var(--bad); border:1px solid rgba(239,107,123,.4); border-radius:10px;
+      padding:8px 10px; font-size:13px; cursor:pointer; min-height:36px; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .msg { font-size:13px; min-height:16px; color:var(--muted); flex:1 1 auto; }
+    .msg.ok { color:var(--ok); } .msg.err { color:var(--bad); }
+    .stat { color:var(--muted); font-size:13px; margin:0 0 8px; }
+    .tbl { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    table.wl { width:max-content; min-width:100%; border-collapse:collapse; background:var(--card); border-radius:12px; }
+    table.wl th, table.wl td { text-align:left; padding:10px; border-bottom:1px solid var(--line); font-size:13px; white-space:nowrap; }
+    table.wl th { color:#c5c2b6; background:#262624; }
+    table.wl tr:hover td { background:#262624; }
+    .tag { display:inline-block; font-size:12px; padding:2px 8px; border-radius:8px; background:#262624; color:#c5c2b6; }
+    .tag.etf { background:rgba(111,186,141,.12); color:#6fba8d; }
+    .mask { display:none; position:fixed; inset:0; background:rgba(17,17,16,.72); z-index:2147483620;
+      align-items:center; justify-content:center; padding:16px; }
+    .mask.on { display:flex; }
+    .dlg { background:#1c1c1a; border:1px solid var(--line); border-radius:14px; padding:20px; width:min(360px,100%); }
+    .dlg h3 { margin:0 0 10px; }
+    .dlg input { width:100%; margin-bottom:10px; }
+    .dlg .row { display:flex; gap:8px; justify-content:flex-end; }
+    @media (min-width:860px) {
+      .top { padding:18px 22px 14px; }
+      .top h1 { font-size:28px; }
+      .clock { font-size:16px; }
+      .card { min-height:auto; }
+      #cards .card { min-height:128px; }
+      .toolbar input { max-width:168px; font-size:14px; }
+      .idx-chip { font-size:12px; }
+    }
+    .mob-dock { display:none; }
+    @media (max-width:859px) {
+      .drawer { width:100vw; border-left:0; z-index:2147483600; }
+      .eyebrow { display:none; }
+      .head-right { flex:1 1 100%; justify-content:flex-start; order:3; }
+      .ovn-news { max-width:none; width:100%; }
+      .ovn-news ul { grid-template-columns:1fr; }
+      .brand { flex-wrap:wrap; }
+      .head-left { flex:1 1 auto; }
+      .top { padding:calc(8px + env(safe-area-inset-top,0px)) 12px 10px; z-index:2147483000; }
+      .top h1 { font-size:18px; line-height:1.4; }
+      .clock { font-size:14px; }
+      .meta { font-size:12px; }
+      .cards { display:flex; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+      #cards .card { flex:0 0 168px; width:168px; min-width:168px; min-height:124px; }
+      .links { margin:4px 0 0; font-size:12px; }
+      /* 苹果 Chrome 的 iframe 会盖住页面上的 fixed 底栏，搜索分析改放顶栏，报告改内嵌滚动 */
+      .top .toggle { background:#f2f1ec; color:#111110; }
+      .toolbar { flex-wrap:wrap; margin:8px 0 6px; }
+      .toolbar input { flex:1 1 96px; min-width:0; max-width:none; font-size:16px; }
+      .idx-tape {
+        flex:1 1 100%; justify-content:flex-start; flex-wrap:nowrap;
+        overflow-x:auto; -webkit-overflow-scrolling:touch;
+      }
+      .idx-chip { font-size:11px; }
+      .bar {
+        flex-direction:column;
+        align-items:stretch;
+      }
+      .bar input, .bar select, .bar button.act {
+        width:100%;
+        max-width:none;
+      }
+      html, body {
+        height:auto; min-height:100dvh; overflow:auto; overflow-x:hidden;
+        -webkit-overflow-scrolling:touch;
+      }
+      .layout { height:auto; min-height:100dvh; overflow:visible; padding-bottom:0; }
+      iframe { display:none !important; height:0 !important; width:0 !important; pointer-events:none !important; }
+      .panel, .panel.on, #panel-report.on, #panel-watch.on {
+        overflow:visible; flex:none; height:auto; min-height:0;
+      }
+      #panel-report.on { display:block; }
+      .stage { z-index:0; display:block; height:auto; min-height:0; flex:none; }
+      .toolbar button { min-width:44px; cursor:pointer; }
+      .report-flow {
+        display:block; flex:none; min-height:0; height:auto; overflow:visible;
+      }
+      .mob-dock { display:none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="top">
+      <div class="brand">
+        <div class="head-left">
+          <p class="eyebrow">今日自选 · 北京</p>
+          <h1 id="title">今日自选</h1>
+          <p class="clock" id="clock">—</p>
+        </div>
+        <div class="head-right">
+          <div class="ovn-news" id="ovn-news"></div>
+        </div>
+      </div>
+      <div class="toolbar" id="toolbar">
+        <input id="scan-code" maxlength="16" placeholder="代码或名称" autocomplete="off">
+        <button class="act" id="btn-analyze" type="button">分析</button>
+        <button class="act warn" id="btn-runall" type="button">重跑</button>
+        <button class="toggle" id="toggle" type="button">管理自选</button>
+        <div class="idx-tape" id="idx-tape" aria-label="本轮快照大盘"></div>
+      </div>
+      <div id="report-head">
+        <div class="cards" id="cards"></div>
+        <div class="links">
+          <a href="/reports/latest.html" target="_blank">新窗口</a>
+          <a href="/reports/" target="_blank">历史</a>
+          <span class="msg" id="scan-hint"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel on" id="panel-report">
+      <div class="stage">
+        <iframe id="report" title="完整报告" src="about:blank" scrolling="yes"></iframe>
+        <div class="report-flow" id="report-flow"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-watch">
+      <div class="wrap">
+        <p class="sub">在这里加减自选。改完后点「重跑全部自选」才会写进今日报告。「分析这只」只看当下、不加入自选。不代下单。</p>
+        <div class="bar">
+          <input name="code" id="code" maxlength="16" placeholder="代码或名称">
+          <input name="board" id="board" placeholder="板块（可选，默认自选）">
+          <select id="kind">
+            <option value="">自动判断股票/ETF</option>
+            <option value="stock">股票</option>
+            <option value="etf">ETF</option>
+          </select>
+          <button class="act" id="preview" type="button">查行情</button>
+          <button class="act" id="add" type="button">添加到自选</button>
+          <button class="act" id="add-analyze" type="button">分析这只</button>
+          <button class="act toggle warn" id="btn-runall2" type="button">重跑全部自选</button>
+          <span class="msg" id="hint"></span>
+        </div>
+        <div class="scan" id="scan-box-watch" style="display:none"></div>
+        <p class="stat" id="stat"></p>
+        <div class="tbl">
+          <table class="wl">
+            <thead>
+              <tr><th>类型</th><th>代码</th><th>市场</th><th>名称</th><th>板块</th><th></th></tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer" id="drawer">
+    <button class="close" id="drawer-close" type="button">关闭</button>
+    <h2>单次分析（不加入自选）</h2>
+    <div class="scan" id="scan-box"></div>
+  </div>
+
+  <div class="mob-dock" id="mob-dock">
+    <div class="idx-tape" id="idx-tape-m" aria-label="本轮快照大盘"></div>
+    <input id="scan-code-m" maxlength="16" placeholder="代码或名称" autocomplete="off" inputmode="search">
+    <div class="mob-row">
+      <button class="act" id="btn-analyze-m" type="button">分析</button>
+      <button class="act" id="btn-runall-m" type="button">重跑</button>
+      <button class="toggle" id="toggle-m" type="button">自选</button>
+    </div>
+  </div>
+
+  <div class="mask" id="mask">
+    <div class="dlg">
+      <h3>管理自选</h3>
+      <p class="sub">请输入管理密码</p>
+      <input type="password" id="pw" placeholder="密码" autocomplete="current-password">
+      <div class="msg err" id="pwerr"></div>
+      <div class="row">
+        <button class="act" type="button" id="pwcancel">取消</button>
+        <button class="act" type="button" id="pwok">进入</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const title = document.getElementById("title");
+    const toggle = document.getElementById("toggle");
+    const reportHead = document.getElementById("report-head");
+    const panelReport = document.getElementById("panel-report");
+    const panelWatch = document.getElementById("panel-watch");
+    const mask = document.getElementById("mask");
+    const iframe = document.getElementById("report");
+    const reportFlow = document.getElementById("report-flow");
+    let watchLoaded = false;
+    let lastSnap = "";
+    let token = sessionStorage.getItem("watch_token") || "";
+
+    function authHeaders(extra) {
+      const h = Object.assign({"Content-Type":"application/json"}, extra || {});
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+    async function api(url, opt) {
+      const r = await fetch(url, Object.assign({}, opt, {headers: authHeaders((opt && opt.headers) || {})}));
+      const d = await r.json().catch(() => ({ok:false, error:"解析失败"}));
+      if (r.status === 401) {
+        token = ""; sessionStorage.removeItem("watch_token");
+      }
+      return {status: r.status, data: d};
+    }
+
+    function mode() {
+      return location.hash === "#watch" ? "watch" : "report";
+    }
+    function show(which) {
+      const watch = which === "watch";
+      panelWatch.classList.toggle("on", watch);
+      panelReport.classList.toggle("on", !watch);
+      reportHead.style.display = watch ? "none" : "block";
+      document.body.classList.toggle("watch", watch);
+      ["scan-code", "btn-analyze", "btn-runall"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = watch ? "none" : "";
+      });
+      const hr = document.querySelector(".head-right");
+      if (hr) hr.style.display = watch ? "none" : "flex";
+      title.textContent = watch ? "管理自选" : "今日自选";
+      toggle.textContent = watch ? "返回报告" : "管理自选";
+      toggle.classList.toggle("alt", watch);
+      if (isPhone()) window.scrollTo(0, 0);
+      if (watch && !watchLoaded) {
+        loadWatch().catch(() => say("加载自选失败", "err"));
+        watchLoaded = true;
+      }
+    }
+    function go(which) {
+      const hash = which === "watch" ? "#watch" : "";
+      if (location.hash !== hash) history.replaceState(null, "", hash || location.pathname);
+      show(which);
+    }
+    async function ensureLogin() {
+      if (token) {
+        const chk = await api("/api/watchlist");
+        if (chk.status !== 401) return true;
+      }
+      return await askPassword();
+    }
+    function askPassword() {
+      return new Promise(resolve => {
+        mask.classList.add("on");
+        document.getElementById("pw").value = "";
+        document.getElementById("pwerr").textContent = "";
+        document.getElementById("pw").focus();
+        const done = (ok) => {
+          mask.classList.remove("on");
+          resolve(ok);
+        };
+        document.getElementById("pwcancel").onclick = () => done(false);
+        document.getElementById("pwok").onclick = async () => {
+          const pw = document.getElementById("pw").value;
+          const r = await fetch("/api/login", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({password: pw})
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!d.ok) {
+            document.getElementById("pwerr").textContent = d.error || "密码错误";
+            return;
+          }
+          token = d.token;
+          sessionStorage.setItem("watch_token", token);
+          done(true);
+        };
+        document.getElementById("pw").onkeydown = (e) => {
+          if (e.key === "Enter") document.getElementById("pwok").click();
+        };
+      });
+    }
+    toggle.onclick = async () => {
+      if (mode() === "watch") {
+        go("report");
+        return;
+      }
+      if (await ensureLogin()) go("watch");
+    };
+    window.addEventListener("hashchange", async () => {
+      if (mode() === "watch") {
+        if (!(await ensureLogin())) go("report");
+        else show("watch");
+      } else show("report");
+    });
+
+    function cls(s) {
+      if (!s) return "";
+      if (s.indexOf("可") >= 0) return "ok";
+      if (s.indexOf("不") >= 0) return "bad";
+      return "watchc";
+    }
+    function fmtBj(t) {
+      const s = String(t || "");
+      const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+      if (m) return m[1] + " " + m[2] + " 北京";
+      return s || "—";
+    }
+    function isPhone() {
+      return window.matchMedia("(max-width:859px)").matches;
+    }
+    async function showReport(url) {
+      if (!isPhone()) {
+        if (reportFlow && reportFlow.shadowRoot) reportFlow.shadowRoot.innerHTML = "";
+        iframe.style.display = "";
+        iframe.src = url;
+        return;
+      }
+      iframe.removeAttribute("src");
+      iframe.src = "about:blank";
+      iframe.style.display = "none";
+      if (!reportFlow) return;
+      try {
+        const r = await fetch(url);
+        const t = await r.text();
+        const doc = new DOMParser().parseFromString(t, "text/html");
+        const root = reportFlow.shadowRoot || reportFlow.attachShadow({mode: "open"});
+        root.innerHTML = "";
+        const wrap = document.createElement("div");
+        wrap.style.cssText = "min-height:100%;background:#111110;color:#f2f1ec;";
+        const st = doc.querySelector("style");
+        const nav = doc.querySelector("nav");
+        const page = doc.querySelector(".page");
+        if (st) wrap.appendChild(document.importNode(st, true));
+        if (nav) wrap.appendChild(document.importNode(nav, true));
+        if (page) wrap.appendChild(document.importNode(page, true));
+        root.appendChild(wrap);
+        if (isPhone()) window.scrollTo(0, 0);
+        else reportFlow.scrollTop = 0;
+      } catch (e) {
+        reportFlow.innerHTML = "<p class='meta'>报告加载失败，请点「新窗口」</p>";
+      }
+    }
+    function paintIdxTape(d) {
+      const hx = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+      const rows = d.idx_tape || [];
+      const html = rows.map(r => {
+        const chg = r.chg;
+        const cls = (chg > 0) ? "up" : (chg < 0) ? "dn" : "flat";
+        const px = (r.px == null) ? "—" : Number(r.px).toFixed(0);
+        const chgTxt = (chg == null) ? "" : ((chg>=0?"+":"") + Number(chg).toFixed(2) + "%");
+        const tip = (r.px == null) ? "本轮快照无报价"
+          : `${r.name} ${Number(r.px).toFixed(2)} ${chgTxt} 开${r.open??"—"} 高${r.high??"—"} 低${r.low??"—"} ${r.shape||""} 量比${r.vol_ratio??"—"} · 快照当时`;
+        return `<span class="idx-chip ${cls}" title="${hx(tip)}"><span class="n">${hx(r.name||"")}</span><span class="p">${px}</span>${chgTxt}</span>`;
+      }).join("");
+      ["idx-tape", "idx-tape-m"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = html || `<span class="idx-chip flat">大盘 —</span>`;
+      });
+    }
+    function applySnap(d) {
+      const t = d.time || d.time_iso || "";
+      const clockEl = document.getElementById("clock");
+      if (clockEl) clockEl.textContent = fmtBj(t);
+      paintIdxTape(d);
+      const top5 = (d.top5 || []).map(x => x.name).join("、") || "—";
+      const avoidBits = (d.avoid_detail || []).length
+        ? (d.avoid_detail || []).map(x => {
+            const amt = (x.amt == null) ? "" : ((x.amt>=0?"+":"") + Number(x.amt).toFixed(0) + "亿");
+            const chg = (x.chg == null) ? "" : ("涨" + (x.chg>=0?"+":"") + Number(x.chg).toFixed(2) + "%");
+            const extra = [amt, chg].filter(Boolean).join("，");
+            return extra ? (x.line + " " + extra) : x.line;
+          }).join("、")
+        : ((d.avoid || []).join("、") || "无（自选对口未净出）");
+      const desk = d.ovn_desk || {};
+      const hx = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+      const boards = (desk.boards || []).map(x => String(x).replace(/[（(][^）)]*[）)]/g, "")).filter(Boolean).join("、") || "暂无映射";
+      const names = (desk.names || []).join("、") || "先看板块";
+      const meal = d.overnight_meal || {};
+      const mealOk = (meal.ok || []).map(x => x.name).filter(Boolean);
+      const mealHold = (meal.hold || []).map(x => x.name).filter(Boolean);
+      const mealWatch = (meal.watch || []).map(x => x.name).filter(Boolean);
+      let mealTxt = "未到窗口";
+      let mealCls = "";
+      if (meal.phase === "buy") {
+        mealTxt = mealOk.length ? mealOk.join("、") : "本轮没有";
+        mealCls = mealOk.length ? cls("可") : "";
+      } else if (meal.phase === "sell") {
+        mealTxt = mealHold.length ? ("早盘清 " + mealHold.join("、")) : "无尾盘仓";
+        mealCls = mealHold.length ? "watchc" : "";
+      } else if (mealHold.length) {
+        mealTxt = mealHold.join("、");
+        mealCls = "watchc";
+      } else if (mealOk.length) {
+        mealTxt = mealOk.join("、");
+        mealCls = cls("可");
+      } else if (meal.phase === "wait") {
+        mealTxt = mealWatch.length ? ("等到14:30 · " + mealWatch.join("、")) : "等到14:30";
+      } else if (meal.phase === "too_late") {
+        mealTxt = "14:57后不追";
+      }
+      const newsEl = document.getElementById("ovn-news");
+      if (newsEl) {
+        const bits = String(desk.news || "").split(/[；;]/).map(s => s.trim()).filter(Boolean);
+        if (!bits.length) {
+          newsEl.innerHTML = "<b>最新资讯</b><ul><li>快讯暂缺</li></ul>";
+        } else {
+          newsEl.innerHTML = "<b>最新资讯</b><ul>" + bits.map(x => `<li>${hx(x)}</li>`).join("") + "</ul>";
+        }
+        newsEl.title = bits.join("；") || "快讯暂缺";
+      }
+      function bookNames(kind) {
+        const books = d.buy_books || {};
+        const mapped = {trend: "趋势", youzi: "游资", daban: "早盘接力仓", etf: "ETF"};
+        const arr = books[kind];
+        if (arr && arr.length) return arr.join("、");
+        const prefix = mapped[kind];
+        const line = String(d.buy_line || "");
+        for (const p of line.split("；")) {
+          const s = p.trim();
+          if (prefix && (s.startsWith(prefix + " ") || s.startsWith(prefix + "："))) {
+            return s.slice(prefix.length).replace(/^[\s：]+/, "");
+          }
+        }
+        return "";
+      }
+      const trendNames = bookNames("trend");
+      const youziNames = bookNames("youzi");
+      const cards = [
+        ["今日必买-趋势", "最佳 10:00–10:30 · 13:00–13:30", trendNames || "暂无，不开新仓", trendNames ? cls("可") : cls("不"), ""],
+        ["今日必买-游资", "最佳 09:35–10:15", youziNames || "暂无，不开新仓", youziNames ? cls("可") : cls("不"), ""],
+        ["尾盘狙击", "独立仓 · 最佳 14:40–14:55 · 不进今日必买", mealTxt, mealCls, ""],
+        ["最值得买", "", top5, "", ""],
+        ["可做主线", "", (d.doable || []).join("、") || "—", "ok", ""],
+        ["回避主线", "", avoidBits, "bad", ""],
+        ["次日关注", "", "板块 " + boards + " · 个股 " + names, "", ""],
+      ];
+      document.getElementById("cards").innerHTML = cards.map(([k, when, v, c, extra]) =>
+        `<div class="card ${extra||""}"><div class="k">${k}</div>${when ? `<div class="when">${when}</div>` : ""}<div class="v ${c}">${v}</div></div>`
+      ).join("");
+      if (t && t !== lastSnap) {
+        lastSnap = t;
+        showReport("/reports/latest.html?t=" + encodeURIComponent(t) + "&r=" + Date.now());
+      }
+    }
+    async function refreshLatest() {
+      try {
+        const r = await fetch("/reports/latest.json?t=" + Date.now());
+        if (!r.ok) return;
+        applySnap(await r.json());
+      } catch (e) {
+        const hint = document.getElementById("scan-hint");
+        if (hint) hint.textContent = "latest.json 暂不可用，下方仍展示已生成的 HTML 报告";
+      }
+    }
+    refreshLatest();
+    setInterval(refreshLatest, 15000);
+
+    const hint = document.getElementById("hint");
+    function say(t, c) { hint.className = "msg " + (c || ""); hint.textContent = t || ""; }
+    function rowsOf(wl) {
+      const out = [];
+      (wl.stocks || []).forEach(x => out.push({...x, kind:"股票"}));
+      (wl.etfs || []).forEach(x => out.push({...x, kind:"ETF"}));
+      return out;
+    }
+    function render(wl) {
+      const list = rowsOf(wl);
+      document.getElementById("stat").textContent =
+        `更新 ${wl.updated || "-"} · 股票 ${ (wl.stocks||[]).length } · ETF ${ (wl.etfs||[]).length }`;
+      document.getElementById("rows").innerHTML = list.map(x => `
+        <tr>
+          <td><span class="tag ${x.kind==="ETF"?"etf":""}">${x.kind}</span></td>
+          <td>${x.code}</td>
+          <td>${(x.market||"").toUpperCase()}</td>
+          <td>${x.name||""}</td>
+          <td>${x.board||"—"}</td>
+          <td>
+            <button class="act" data-analyze="${x.code}" data-board="${x.board||""}" type="button">分析</button>
+            <button class="danger" data-code="${x.code}" type="button">删除</button>
+          </td>
+        </tr>`).join("");
+      document.querySelectorAll("button.danger").forEach(btn => {
+        btn.onclick = () => remove(btn.dataset.code, btn);
+      });
+      document.querySelectorAll("button[data-analyze]").forEach(btn => {
+        btn.onclick = () => analyze(btn.dataset.analyze, btn.dataset.board, false, btn);
+      });
+    }
+    async function loadWatch() {
+      const r = await api("/api/watchlist?t=" + Date.now());
+      if (r.status === 401) { watchLoaded = false; go("report"); return; }
+      render(r.data);
+    }
+    async function preview() {
+      const code = document.getElementById("code").value.trim();
+      say("查询中…");
+      const r = await api("/api/quote?code=" + encodeURIComponent(code));
+      const d = r.data;
+      if (!d.ok) { say(d.error || "未找到", "err"); return; }
+      const i = d.item;
+      say(`${i.name} ${i.market}${i.code}  ${i.px}  ${i.chg>=0?"+":""}${Number(i.chg).toFixed(2)}%  (${i.kind})`, "ok");
+    }
+    async function add() {
+      const code = document.getElementById("code").value.trim();
+      const board = document.getElementById("board").value.trim();
+      const kind = document.getElementById("kind").value;
+      const btn = document.getElementById("add");
+      btn.disabled = true;
+      say("添加中…");
+      try {
+        const r = await api("/api/watchlist", {
+          method: "POST",
+          body: JSON.stringify({code, board, kind})
+        });
+        const d = r.data;
+        if (!d.ok) { say(d.error || "失败", "err"); return; }
+        say(`已加入 ${d.item.name} ${d.item.code}`, "ok");
+        document.getElementById("code").value = "";
+        render(d.watchlist);
+      } catch (e) {
+        say("网络错误", "err");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    async function remove(code, btn) {
+      if (!confirm("从自选删除 " + code + " ？")) return;
+      btn.disabled = true;
+      const r = await api("/api/watchlist/remove", {
+        method: "POST",
+        body: JSON.stringify({code})
+      });
+      const d = r.data;
+      if (!d.ok) { say(d.error || "删除失败", "err"); btn.disabled = false; return; }
+      say("已删除 " + (d.removed.name || code), "ok");
+      render(d.watchlist);
+    }
+    document.getElementById("preview").onclick = preview;
+    document.getElementById("add").onclick = add;
+    document.getElementById("code").addEventListener("keydown", e => {
+      if (e.key === "Enter") add();
+    });
+
+    function callClass(call) {
+      if (!call) return "";
+      if (call.indexOf("可") >= 0) return "ok";
+      if (call.indexOf("不") >= 0) return "bad";
+      return "watchc";
+    }
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+    function paintScan(d, box) {
+      if (!d || !d.ok) {
+        if (box) box.style.display = "none";
+        return;
+      }
+      const i = d.item || {};
+      const sc = d.scores || {};
+      const tp = d.tape || {};
+      const chg = i.chg == null ? "" : ((i.chg>=0?"+":"") + Number(i.chg).toFixed(2) + "%");
+      const html = `
+        <h3>${i.name || ""} ${i.code || ""} · <span class="${callClass(d.call)}">${d.hand || d.call || ""}</span></h3>
+        <div class="grid">
+          <div class="card"><div class="k">买点闸</div><div class="v ${callClass(d.call)}">${d.call || "—"}</div></div>
+          <div class="card"><div class="k">值分</div><div class="v">${sc.worth ?? "—"}</div></div>
+          <div class="card"><div class="k">均线分</div><div class="v">${sc.ma ?? "—"}</div></div>
+          <div class="card"><div class="k">盘面</div><div class="v">${sc.tape_txt || "—"}</div></div>
+          <div class="card"><div class="k">现价 / 今涨</div><div class="v">${i.px ?? "—"} ${chg}</div></div>
+          <div class="card"><div class="k">仓 / 主线</div><div class="v">${({"打板":"早盘接力仓","尾盘打板":"尾盘狙击","尾盘隔夜仓":"尾盘狙击","午夜关注":"尾盘狙击"}[d.kind] || d.kind || "")} · ${d.line || "—"}</div></div>
+          <div class="card"><div class="k">竞价</div><div class="v ${callClass(sc.auction)}">${sc.auction || "—"} (${sc.auction_pts>=0?"+":""}${sc.auction_pts || 0})</div></div>
+          <div class="card"><div class="k">量价 / 均价</div><div class="v">${tp.vp || "—"} · ${tp.vwap_pos || "—"}</div></div>
+          <div class="card"><div class="k">早盘接力仓</div><div class="v">${(d.daban && d.daban.in_pool) ? ((d.daban.setup||"") + " " + (d.daban.score||0)) : "未入池"}</div></div>
+          <div class="card"><div class="k">止损 / 止盈</div><div class="v">${(d.exits && d.exits.txt) ? d.exits.txt : "未过闸不算"}</div></div>
+        </div>
+        <div class="why-h">判断依据</div>
+        ${((d.reasons && d.reasons.length) ? d.reasons : [{k:"为什么", v:(d.why||"—") + (sc.auction_why ? ("。竞价："+sc.auction_why) : "")}]).map(r => {
+          const kc = String(r.k||"");
+          const tag = (kc.indexOf("硬闸")>=0 || (r.v||"").indexOf("挡「")>=0) ? "bad" : "";
+          return `<p class="why"><b class="${tag}">${esc(r.k)}</b>${esc(r.v)}</p>`;
+        }).join("")}
+        <div class="why">模块 ${d.module_ok ?? 0}/${d.module_n ?? 0}：${(d.modules||[]).map(m => esc(m.name) + (m.ok?"":"(缺)") + (m.note?(" "+esc(m.note)):"")).join(" · ")}</div>`;
+      if (mode() === "watch") {
+        box.style.display = "block";
+        box.innerHTML = html;
+      } else {
+        document.getElementById("drawer").classList.add("on");
+        document.getElementById("scan-box").innerHTML = html;
+      }
+    }
+    async function analyze(code, board, save, btn) {
+      if (save && !(await ensureLogin())) return;
+      const hintEl = document.getElementById(mode() === "watch" ? "hint" : "scan-hint");
+      const box = document.getElementById(mode() === "watch" ? "scan-box-watch" : "scan-box");
+      const sayHere = (t, c) => {
+        if (!hintEl) return;
+        hintEl.className = "msg " + (c || "");
+        hintEl.textContent = t || "";
+      };
+      if (btn) btn.disabled = true;
+      sayHere("分析中，约十几秒…");
+      try {
+        const r = await api("/api/analyze", {
+          method: "POST",
+          body: JSON.stringify({code, board: board || "", kind: (document.getElementById("kind")||{}).value || "", save: !!save})
+        });
+        const d = r.data;
+        if (!d.ok) { sayHere(d.error || "分析失败", "err"); return; }
+        sayHere((save && d.added ? "已加入自选 · " : "单次分析 · ") + d.item.name + " " + (d.hand || d.call) + " · " + (d.module_ok||0) + "/" + (d.module_n||0) + "模块", callClass(d.call)==="ok"?"ok":(callClass(d.call)==="bad"?"err":""));
+        paintScan(d, box);
+        if (save && d.added && watchLoaded) loadWatch();
+      } catch (e) {
+        sayHere("网络错误", "err");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+    let snapTimer = null;
+    async function runAll(btn) {
+      if (!(await ensureLogin())) return;
+      const hintEl = document.getElementById(mode() === "watch" ? "hint" : "scan-hint");
+      const sayHere = (t, c) => { hintEl.className = "msg " + (c || ""); hintEl.textContent = t || ""; };
+      if (btn) btn.disabled = true;
+      sayHere("正在启动全池快照…");
+      try {
+        const r = await api("/api/snapshot", {method: "POST", body: "{}"});
+        const d = r.data;
+        if (!d.ok) { sayHere(d.error || "启动失败", "err"); if (btn) btn.disabled = false; return; }
+        sayHere(d.started ? "全池快照已开始，大约半分钟。不用关页、不用手动刷新，生成完会自动换新报告。" : (d.error || "快照进行中…"));
+        if (snapTimer) clearInterval(snapTimer);
+        let n = 0;
+        const startedAt = Date.now();
+        snapTimer = setInterval(async () => {
+          n += 1;
+          const s = await api("/api/snapshot");
+          const st = s.data || {};
+          if (st.error && !st.running) {
+            sayHere(st.error, "err");
+            clearInterval(snapTimer); snapTimer = null;
+            if (btn) btn.disabled = false;
+            return;
+          }
+          if (!st.running) {
+            lastSnap = "";
+            go("report");
+            await refreshLatest();
+            showReport("/reports/latest.html?t=" + encodeURIComponent(st.latest_time || Date.now()) + "&r=" + Date.now());
+            sayHere("报告已生成并自动刷新 " + (st.latest_time || "") + "，不用再手动刷新。", "ok");
+            clearInterval(snapTimer); snapTimer = null;
+            if (btn) btn.disabled = false;
+            return;
+          }
+          const sec = Math.round((Date.now() - startedAt) / 1000);
+          sayHere("正在生成完整报告…已 " + sec + " 秒。请等着，完成后会自动刷新，不用手动刷新。");
+          if (n > 90) {
+            sayHere("超过3分钟仍在跑。可再点一次或等定时快照。", "err");
+            clearInterval(snapTimer); snapTimer = null;
+            if (btn) btn.disabled = false;
+          }
+        }, 2000);
+      } catch (e) {
+        sayHere("网络错误", "err");
+        if (btn) btn.disabled = false;
+      }
+    }
+    function scanCode() {
+      const m = document.getElementById("scan-code-m");
+      const d = document.getElementById("scan-code");
+      const mobile = window.matchMedia("(max-width:859px)").matches;
+      const el = (mobile && m) ? m : d;
+      return ((el && el.value) || (d && d.value) || (m && m.value) || "").trim();
+    }
+    function bindScan(src, dst) {
+      if (!src || !dst) return;
+      src.addEventListener("input", () => { dst.value = src.value; });
+    }
+    bindScan(document.getElementById("scan-code"), document.getElementById("scan-code-m"));
+    bindScan(document.getElementById("scan-code-m"), document.getElementById("scan-code"));
+    const runAnalyze = (btn) => analyze(scanCode(), "自选", false, btn);
+    document.getElementById("btn-analyze").onclick = () => runAnalyze(document.getElementById("btn-analyze"));
+    const btnAm = document.getElementById("btn-analyze-m");
+    if (btnAm) btnAm.onclick = () => runAnalyze(btnAm);
+    document.getElementById("drawer-close").onclick = () => {
+      document.getElementById("drawer").classList.remove("on");
+    };
+    document.getElementById("scan-code").addEventListener("keydown", e => {
+      if (e.key === "Enter") runAnalyze(document.getElementById("btn-analyze"));
+    });
+    const scanM = document.getElementById("scan-code-m");
+    if (scanM) scanM.addEventListener("keydown", e => {
+      if (e.key === "Enter") runAnalyze(btnAm);
+    });
+    document.getElementById("btn-runall").onclick = () => runAll(document.getElementById("btn-runall"));
+    const btnRm = document.getElementById("btn-runall-m");
+    if (btnRm) btnRm.onclick = () => runAll(btnRm);
+    document.getElementById("btn-runall2").onclick = () => runAll(document.getElementById("btn-runall2"));
+    const togM = document.getElementById("toggle-m");
+    if (togM) togM.onclick = () => toggle.click();
+    document.getElementById("add-analyze").onclick = () => {
+      const code = document.getElementById("code").value.trim();
+      const board = document.getElementById("board").value.trim();
+      analyze(code, board, false, document.getElementById("add-analyze"));
+    };
+    (async () => {
+      const tools = document.getElementById("tools");
+      const syncTools = () => {
+        if (!tools) return;
+        tools.open = window.matchMedia("(min-width:860px)").matches;
+      };
+      syncTools();
+      window.addEventListener("resize", syncTools);
+      if (mode() === "watch") {
+        if (await ensureLogin()) show("watch");
+        else go("report");
+      } else show("report");
+    })();
+  </script>
+</body>
+</html>

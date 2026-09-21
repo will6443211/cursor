@@ -471,7 +471,6 @@
       document.getElementById("meta").textContent = (clk.action ? ("下手：" + clk.slot + " " + clk.action + " · ") : "") + "先看第0节「今日必买」 · 大盘是本轮快照当时价";
       paintIdxTape(d);
       const top5 = (d.top5 || []).map(x => x.name).join("、") || "—";
-      const pick = d.pick_name || "没有";
       const avoidBits = (d.avoid_detail || []).length
         ? (d.avoid_detail || []).map(x => {
             const amt = (x.amt == null) ? "" : ((x.amt>=0?"+":"") + Number(x.amt).toFixed(0) + "亿");
@@ -491,18 +490,22 @@
       let mealTxt = "未到窗口";
       let mealCls = "";
       if (meal.phase === "buy") {
-        mealTxt = mealOk.length ? ("可尾盘 " + mealOk.join("、")) : "本轮没有";
+        mealTxt = mealOk.length ? mealOk.join("、") : "本轮没有";
         mealCls = mealOk.length ? cls("可") : "";
       } else if (meal.phase === "sell") {
         mealTxt = mealHold.length ? ("早盘清 " + mealHold.join("、")) : "无尾盘仓";
         mealCls = mealHold.length ? "watchc" : "";
       } else if (mealHold.length) {
-        mealTxt = "待卖 " + mealHold.join("、");
+        mealTxt = mealHold.join("、");
         mealCls = "watchc";
+      } else if (mealOk.length) {
+        mealTxt = mealOk.join("、");
+        mealCls = cls("可");
       } else if (meal.phase === "wait") {
         mealTxt = mealWatch.length ? ("等到14:30 · " + mealWatch.join("、")) : "等到14:30";
+      } else if (meal.phase === "too_late") {
+        mealTxt = "14:57后不追";
       }
-      else if (meal.phase === "too_late") mealTxt = "14:57后不追";
       const newsEl = document.getElementById("ovn-news");
       if (newsEl) {
         const bits = String(desk.news || "").split(/[；;]/).map(s => s.trim()).filter(Boolean);
@@ -516,8 +519,6 @@
       const cards = [
         ["今日必买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
         ["尾盘打板", mealTxt, mealCls, ""],
-        ["总闸", d.buy_today || "—", cls(d.buy_today), ""],
-        ["首选", pick, "", ""],
         ["最值得买", top5, "", ""],
         ["可做主线", (d.doable || []).join("、") || "—", "ok", ""],
         ["回避主线", avoidBits, "bad", ""],

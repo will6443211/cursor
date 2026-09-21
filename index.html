@@ -484,8 +484,6 @@
       const hx = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
       const boards = (desk.boards || []).map(x => String(x).replace(/[（(][^）)]*[）)]/g, "")).filter(Boolean).join("、") || "暂无映射";
       const names = (desk.names || []).join("、") || "先看板块";
-      const newsBits = String(desk.news || "").split(/[；;]/).map(s => s.trim()).filter(Boolean);
-      const newsTxt = newsBits.length ? newsBits.slice(0, 3).join("；") : "快讯暂缺";
       const meal = d.overnight_meal || {};
       const mealOk = (meal.ok || []).map(x => x.name).filter(Boolean);
       const mealHold = (meal.hold || []).map(x => x.name).filter(Boolean);
@@ -533,7 +531,6 @@
       }
       const clockCls = /主买点|真开仓|可尾盘|主卖点/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(mealB) + String(mealS) + mealTxt) ? cls("可") : "";
       const cards = [
-        ["最新资讯", newsTxt, "", ""],
         ["今日必买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
         ["总闸", d.buy_today || "—", cls(d.buy_today), ""],
         ["首选", pick, "", ""],

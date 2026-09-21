@@ -7187,7 +7187,7 @@ def main():
         tag = "14:30待确认" if meal_phase == "wait" else "在池未过闸"
         lines.append(f"- **{tag}：** " + "；".join(meal_watch))
     lines.append("")
-    # ---- 胜率追踪（原0d，独立目录；不进闸） ----
+    # ---- 胜率追踪：今日必买 / 尾盘打板 分开；对照表不是买点 ----
     rv = review or {}
     bt = rv.get("buy_track") or {}
     mt = rv.get("meal_track") or {}
@@ -7218,11 +7218,46 @@ def main():
                 )
         else:
             lines.append(empty)
-    lines.append("## 胜率追踪")
-    lines.append("原来的筛选胜率还在；尾盘打板单独一栏。都不参与今天的闸。")
+
+    def _call_mean(key):
+        return {
+            "可小仓": "真开仓",
+            "可试仓": "真开仓（更轻）",
+            "观察": "对照，不是买点",
+            "不追": "对照（过热没追）",
+            "不买": "对照，不是买点",
+        }.get(key, "对照")
+
+    def _disc_look(by_call):
+        buy = next((r for r in by_call if r.get("key") == "可小仓"), None)
+        watch = next((r for r in by_call if r.get("key") == "观察"), None)
+        skip = next((r for r in by_call if r.get("key") == "不追"), None)
+        bits = []
+        if buy and watch:
+            bits.append(
+                f"可小仓次日胜率{buy['win']:.0f}%均收{buy['a1']:+.2f}%（{buy['n']}笔），"
+                f"观察{watch['win']:.0f}%均收{watch['a1']:+.2f}%（{watch['n']}笔）。"
+            )
+            if buy["n"] < 8 or watch["n"] < 8:
+                bits.append("样本太少，先不当真。")
+            elif buy["win"] > watch["win"] + 5 and buy["a1"] > watch["a1"]:
+                bits.append("可小仓打赢观察，闸有区分度。")
+            else:
+                bits.append("可小仓没有打赢观察，闸区分度不足；不要因此去买观察。")
+        if skip and skip["n"] <= 5 and skip["win"] >= 80:
+            bits.append("不追样本很小、次日均收高，多半是涨停/过热票惯性，不是该追的证据。")
+        bits.append("3日/5日要等样本走过才有数。复盘只用来改阈值，不参与今天的判别。")
+        return " ".join(bits)
+
+    lines.append("## 胜率追踪-今日必买")
+    lines.append(
+        "第0节真开仓的成绩单，和尾盘打板分开。**只有可小仓是你按闸买过的票。**"
+        "下面「对照」里观察/不买/不追的胜率，是**假如当时买了**会怎样，用来检查闸有没有用，不是买点。"
+        "都不改今天的闸。"
+    )
     cost_txt = bt.get("cost_pct", rv.get("cost_pct", 0.1))
     _track_block(
-        "今日必买（原筛选胜率）",
+        "真开仓（第一次可小仓）",
         "口径：每个交易日每只票只记**第一次可小仓**（入选日+入选价），盘中反复跑不再追加。"
         "盘中09:30–14:50入选，成交价=入选价；收盘后/盘前入选，成交价=次日开。"
         f"A股T+1，**胜负=次日收÷成交价，已扣成本{cost_txt}%**。"
@@ -7231,8 +7266,44 @@ def main():
         f"- 还没有可小仓留档（本次新增判别 {n_j} 条）。出现今日必买之后，这里会列出入选日和入选价。",
         bt,
     )
+    lines.append("### 对照：假如当时买了（不是推荐）")
+    if rv.get("n_eval"):
+        lines.append(
+            f"口径：第0节全部判别留档 {rv['n_rec']} 条、已可评估 {rv['n_eval']} 条；"
+            f"不管当时是可小仓还是观察/不买/不追，都用**信号当时价→之后第1/3/5个交易日收盘**，已扣成本{rv.get('cost_pct')}%。"
+            "不含尾盘打板。观察65%、不买65%不等于该买，只说明这些票次日也有人赚钱，闸有没有把更好的留下来。"
+        )
+        lines.append("| 当时结论 | 含义 | 样本 | 假如买入次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for r in rv.get("by_call") or []:
+            a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
+            a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
+            ntxt = f"{r['n']}" + (" 少" if r["n"] < 8 else "")
+            key = r.get("key") or "-"
+            mark = f"**{key}**" if key == "可小仓" else key
+            lines.append(
+                f"| {mark} | {_call_mean(key)} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
+            )
+        by_kind = [r for r in (rv.get("by_kind") or []) if r["key"].startswith(("可小仓", "可试仓"))]
+        if by_kind:
+            lines.append("| 真开仓/战法 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
+            lines.append("|---|---|---|---|---|---|")
+            for r in by_kind[:8]:
+                a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
+                a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
+                ntxt = f"{r['n']}" + (" 少" if r["n"] < 8 else "")
+                lines.append(
+                    f"| {r['key']} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
+                )
+        lines.append("- 看法：" + _disc_look(rv.get("by_call") or []))
+    else:
+        lines.append(f"- 对照表要等隔一个交易日才有可评估样本（本次新增 {n_j} 条）。")
+    lines.append("")
+
+    lines.append("## 胜率追踪-尾盘打板")
+    lines.append("第1节独立仓的成绩单，不进今日必买，也不跟第0节闸混在一张表里。")
     _track_block(
-        "尾盘打板（筛选胜率）",
+        "真开仓（第一次可尾盘）",
         "口径：每个交易日每只票只记**第一次可尾盘**。14:30后入选价=当时尾盘价，不改成次日开。"
         "隔夜胜率=次日开÷入选价，这是早盘兑现的参考。"
         "收盘胜率是拿到次日收，比策略10:00清完更晚，只作对照。"
@@ -7241,35 +7312,8 @@ def main():
         + (f"（本次新增 {n_jm} 条）" if n_jm else ""),
         mt,
     )
-    lines.append("### 闸区分度（全部判别，对照用）")
-    if rv.get("n_eval"):
-        lines.append(
-            f"口径：留档 {rv['n_rec']} 条、已可评估 {rv['n_eval']} 条；"
-            f"从信号当时价算到之后第1/3/5个交易日收盘，已扣成本{rv.get('cost_pct')}%。不含尾盘打板。"
-        )
-        lines.append("| 判别 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
-        lines.append("|---|---|---|---|---|---|")
-        for r in rv.get("by_call") or []:
-            a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
-            a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
-            lines.append(
-                f"| **{r['key']}** | {r['n']} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
-            )
-        by_kind = [r for r in (rv.get("by_kind") or []) if r["key"].startswith(("可小仓", "可试仓"))]
-        if by_kind:
-            lines.append("| 判别/战法 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
-            lines.append("|---|---|---|---|---|---|")
-            for r in by_kind[:8]:
-                a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
-                a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
-                lines.append(
-                    f"| {r['key']} | {r['n']} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
-                )
-        lines.append("- 看法：可小仓的次日胜率和均收要明显高于观察，否则闸没有区分度；某个战法长期为负就该关掉它，而不是继续调参。")
-    else:
-        lines.append(f"- 对照表要等隔一个交易日才有可评估样本（本次新增 {n_j} 条）。")
-    lines.append("- 复盘只用来改阈值，不参与今天的判别。")
     lines.append("")
+
     lines.append("## 2 板块资金")
     flow_src = "盘中实时" if cn_flow_live() else "休市/竞价=昨收最新（live 优先，连不上再用 delay）"
     lines.append(
@@ -7946,7 +7990,8 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         "<a href='#snews'>最新资讯</a>",
         "<a href='#s0'>0 今日必买</a>",
         "<a href='#s1'>1 尾盘打板</a>",
-        "<a href='#swin'>胜率追踪</a>",
+        "<a href='#swin'>胜率追踪-今日必买</a>",
+        "<a href='#swin-meal'>胜率追踪-尾盘打板</a>",
         "<a href='#s2'>2 板块资金</a>",
         "<a href='#s3'>3 集合竞价</a>",
         "<a href='#s4'>4 个股一览</a>",
@@ -7996,6 +8041,8 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
                 hid = f"s{m.group(1)}"
             elif title_txt.startswith("最新资讯"):
                 hid = "snews"
+            elif title_txt.startswith("胜率追踪-尾盘"):
+                hid = "swin-meal"
             elif title_txt.startswith("胜率追踪"):
                 hid = "swin"
             else:
@@ -8173,8 +8220,9 @@ if __name__ == "__main__":
         src = open(__file__, encoding="utf-8").read()
         gen = src.split('if __name__')[0]
         assert gen.find("## 14 买点钟") > gen.find("## 13 买点明细")
-        assert gen.find("## 胜率追踪") > gen.find("## 1 尾盘打板")
-        assert gen.find("## 2 板块资金") > gen.find("## 胜率追踪")
+        assert gen.find("## 胜率追踪-今日必买") > gen.find("## 1 尾盘打板")
+        assert gen.find("## 胜率追踪-尾盘打板") > gen.find("## 胜率追踪-今日必买")
+        assert gen.find("## 2 板块资金") > gen.find("## 胜率追踪-尾盘打板")
         assert "### 0d 可以买跟踪" not in gen
         assert "### 0a 买点钟" not in gen
         assert "### 0e 最新资讯" not in gen

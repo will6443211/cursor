@@ -4898,11 +4898,17 @@ def overnight_meal_plan(s, q, f, yld, st, line, mood, now=None, zt_y=None, zt_t=
         return {**empty, "in_pool": True, "call": "观察", "why": "情绪退潮，尾盘隔夜仓空仓", "bits": ["退潮"]}
     if st == "回避":
         return {**empty, "in_pool": True, "call": "观察", "why": "主线回避，尾盘隔夜仓不跟支线", "bits": ["回避"]}
-    if yi is not None and yi >= BIG_CAP_YI:
+    if yi is None or yi >= BIG_CAP_YI:
+        if yi is None:
+            setup, why = "市值未知", "市值没取到，尾盘狙击不放行，避免权重白马混进隔夜"
+        else:
+            setup, why = "大盘不做", (
+                f"市值{yi:.0f}亿≥{int(BIG_CAP_YI)}亿，尾盘狙击不做权重白马"
+                "（隔夜+3%弹性不够，走第0节趋势仓）"
+            )
         return {
-            **empty, "in_pool": True, "call": "不买", "setup": "大盘不做",
-            "why": f"市值{yi:.0f}亿≥{int(BIG_CAP_YI)}亿，尾盘隔夜仓不做权重白马（隔夜+3%弹性不够，走第0节趋势仓）",
-            "bits": [f"市值{yi:.0f}亿"],
+            **empty, "in_pool": True, "call": "不买", "setup": setup,
+            "why": why, "bits": [setup],
         }
     if vwap is not None and px is not None and px < vwap:
         return {
@@ -6710,7 +6716,7 @@ def main():
         meal_hold_picks = meal_blob.get("picks") or []
     meal_hold_picks = [
         x for x in meal_hold_picks
-        if (meal_by_code.get(x.get("code") or "") or {}).get("setup") != "大盘不做"
+        if (meal_by_code.get(x.get("code") or "") or {}).get("setup") not in ("大盘不做", "市值未知")
     ]
 
     t1_all, n_trend, n_youzi = [], 0, 0
@@ -8323,6 +8329,13 @@ if __name__ == "__main__":
             q_big, {}, None, "可做", "创新药", {"phase": "修复"}, t(14, 45), {}, {}, [],
         )
         assert meal_big["call"] == "不买" and meal_big["setup"] == "大盘不做", meal_big
+        q_nom = dict(q_big)
+        q_nom["mcap"] = 0
+        meal_nom = overnight_meal_plan(
+            {"code": "600276", "name": "恒瑞医药", "asset": "stock"},
+            q_nom, {}, None, "可做", "创新药", {"phase": "修复"}, t(14, 45), {}, {}, [],
+        )
+        assert meal_nom["call"] == "不买" and meal_nom["setup"] == "市值未知", meal_nom
         q_mid = dict(q)
         q_mid["mcap"] = 399
         meal_mid = overnight_meal_plan(

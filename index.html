@@ -519,10 +519,9 @@
       const nowAct = clk.now || {};
       const clockTxt = nowAct.youzi_buy
         ? (`游资${nowAct.youzi_buy} / 卖${nowAct.youzi_sell}；趋势${nowAct.trend_buy}`)
-        : (clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第0a节");
+        : (clk.name ? (clk.name + " · 游资" + (clk.youzi || "") ) : "看第14节");
       const clockCls = /主买点|真开仓|可尾盘/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(clk.meal || "") + mealTxt) ? cls("可") : "";
       const cards = [
-        ["下手钟", clockTxt, clockCls, ""],
         ["能不能买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
         ["总闸", d.buy_today || "—", cls(d.buy_today), ""],
         ["首选", pick, "", ""],
@@ -531,6 +530,7 @@
         ["回避主线", avoidBits, "bad", ""],
         ["次日关注", "板块 " + boards + " · 个股 " + names, "", ""],
         ["最新资讯", newsTxt, "", ""],
+        ["下手钟", clockTxt, clockCls, ""],
       ];
       document.getElementById("cards").innerHTML = cards.map(([k,v,c,extra]) =>
         `<div class="card ${extra||""}"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`

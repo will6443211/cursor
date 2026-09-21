@@ -6708,45 +6708,6 @@ def main():
         lines.append(f"| 左侧 | {nm} | - | - | **可试仓** | 超跌 | 轻仓，不替代右侧；失败=破今日低 | {sl} | {tp} |")
     if not n0:
         lines.append("| - | 没有 | - | - | **不买** | - | 不开新仓 | - | - |")
-    lines.append("### 0a 买点钟（09:30–14:30 不是随时买）")
-    lines.append(
-        f"**现在：{clk['slot']}　{clk['name']}。{clk['action']}**"
-    )
-    now_act = style_now_action(now)
-    lines.append(
-        f"- 本窗口动作：游资 **{clk['youzi']}** · 趋势 **{clk['trend']}** · 打板 **{clk['daban']}** · 尾盘打板 **{clk['meal']}**"
-    )
-    lines.append(
-        f"- 现在买卖：游资买 {now_act['youzi_buy']} / 卖旧仓 {now_act['youzi_sell']}；"
-        f"趋势买 {now_act['trend_buy']} / 卖 {now_act['trend_sell']}；"
-        f"打板买 {now_act['daban_buy']} / 卖旧仓 {now_act['daban_sell']}"
-    )
-    lines.append("| 仓 | 买（胜率相对高） | 这时不买 | 卖（胜率相对高） | 拿多久 |")
-    lines.append("|---|---|---|---|---|")
-    for b in style_books():
-        lines.append(
-            f"| **{b['kind']}** | {b['buy']} | {b['skip']} | {b['sell']} | {b['hold']} |"
-        )
-    lines.append("| 时段 | 叫什么 | 主流怎么用 |")
-    lines.append("|---|---|---|")
-    for a, b, c in clk["table"]:
-        if clk["slot"] == a:
-            lines.append(f"| **{a}** | **{b}** | **{c}** |")
-        else:
-            lines.append(f"| {a} | {b} | {c} |")
-    lines.append(
-        "- 游资真开仓：只做 **09:35–10:15**，10:30后再刷只确认还在不新开。"
-        "散户卖在 **次日 09:31–09:50**，最晚 10:00。这是市场里短打胜率最高的映射，不是当天下午卖今天买的票。"
-    )
-    lines.append(
-        "- 趋势真开仓：**10:00–10:30 回踩** 和 **13:00–13:30 午后确认**，不抢开盘三分钟、不追 14:00 后新高。"
-        "卖按结构：冲高 09:45–10:15 减、破计划位立刻走、主线走弱次日早盘清。"
-    )
-    lines.append(
-        "- 打板真开仓：只做昨板接力 **09:32–09:50**（不炸）或弱转强 **09:35–10:00**。今首板和尾盘偷鸡不做。"
-        "次日不封/开板 **09:30–09:45 走**。未晋级不隔第二夜。"
-    )
-    lines.append("- 散户T+1：" + clk["retail"])
     lines.append("### 0b 打板（今首板不追，昨板接力才看）")
     lines.append("- 今天刚封的**首板默认不追**。能买的只有：昨首板今天冲二（一进二）、昨烂板弱转强、龙头断板回踩（龙回头）。二进三及以上只盯不打。")
     lines.append("- 尾盘打板/隔夜套利不走这一仓，看 **第1节 尾盘打板**。")
@@ -7470,6 +7431,47 @@ def main():
         lines.append(f"- {r}")
     lines.append("- 不代下单、不要账号。")
     lines.append("")
+    lines.append("## 14 买点钟（09:30–14:30 不是随时买）")
+    lines.append(
+        f"**现在：{clk['slot']}　{clk['name']}。{clk['action']}**"
+    )
+    now_act = style_now_action(now)
+    lines.append(
+        f"- 本窗口动作：游资 **{clk['youzi']}** · 趋势 **{clk['trend']}** · 打板 **{clk['daban']}** · 尾盘打板 **{clk['meal']}**"
+    )
+    lines.append(
+        f"- 现在买卖：游资买 {now_act['youzi_buy']} / 卖旧仓 {now_act['youzi_sell']}；"
+        f"趋势买 {now_act['trend_buy']} / 卖 {now_act['trend_sell']}；"
+        f"打板买 {now_act['daban_buy']} / 卖旧仓 {now_act['daban_sell']}"
+    )
+    lines.append("| 仓 | 买（胜率相对高） | 这时不买 | 卖（胜率相对高） | 拿多久 |")
+    lines.append("|---|---|---|---|---|")
+    for b in style_books():
+        lines.append(
+            f"| **{b['kind']}** | {b['buy']} | {b['skip']} | {b['sell']} | {b['hold']} |"
+        )
+    lines.append("| 时段 | 叫什么 | 主流怎么用 |")
+    lines.append("|---|---|---|")
+    for a, b, c in clk["table"]:
+        if clk["slot"] == a:
+            lines.append(f"| **{a}** | **{b}** | **{c}** |")
+        else:
+            lines.append(f"| {a} | {b} | {c} |")
+    lines.append(
+        "- 游资真开仓：只做 **09:35–10:15**，10:30后再刷只确认还在不新开。"
+        "散户卖在 **次日 09:31–09:50**，最晚 10:00。这是市场里短打胜率最高的映射，不是当天下午卖今天买的票。"
+    )
+    lines.append(
+        "- 趋势真开仓：**10:00–10:30 回踩** 和 **13:00–13:30 午后确认**，不抢开盘三分钟、不追 14:00 后新高。"
+        "卖按结构：冲高 09:45–10:15 减、破计划位立刻走、主线走弱次日早盘清。"
+    )
+    lines.append(
+        "- 打板真开仓：只做昨板接力 **09:32–09:50**（不炸）或弱转强 **09:35–10:00**。今首板和尾盘偷鸡不做。"
+        "次日不封/开板 **09:30–09:45 走**。未晋级不隔第二夜。"
+    )
+    lines.append("- 散户T+1：" + clk["retail"])
+    lines.append("- 只标钟，不改第0节闸：过闸才能买，没过闸这个钟不能把观察票洗成可以买。")
+    lines.append("")
     out = "\n".join(lines)
     os.makedirs(os.path.join(ROOT, "reports"), exist_ok=True)
     stamp = now.strftime("%Y%m%d_%H%M")
@@ -7709,6 +7711,7 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         "<a href='#s11'>11 个股对照</a>",
         "<a href='#s12'>12 今日时点</a>",
         "<a href='#s13'>13 买点明细</a>",
+        "<a href='#s14'>14 买点钟</a>",
         "</nav><div class=page>",
     ]
     lines = md.replace("\r\n", "\n").split("\n")
@@ -7902,6 +7905,9 @@ if __name__ == "__main__":
         assert c["youzi"] == "不新开" and c["meal"].startswith("真开仓"), c
         c = buy_clock(t(11, 40))
         assert c["name"] == "午休", c
+        src = open(__file__, encoding="utf-8").read()
+        assert src.find("## 14 买点钟") > src.find("## 13 买点明细")
+        assert "### 0a 买点钟" not in src
         assert overnight_meal_phase(t(14, 45)) == "buy"
         assert overnight_meal_phase(t(9, 40)) == "sell"
         assert overnight_meal_phase(t(12, 0)) == "wait"

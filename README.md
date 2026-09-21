@@ -2,6 +2,8 @@
 
 北京时间交易时段自动分析。不代下单。
 
+GitHub：https://github.com/will6443211/cursor
+
 ## 跑一次
 
 ```bash
@@ -48,12 +50,11 @@ python3 run_snapshot.py
 
 ## Git
 
-本目录是 git 仓库。远程：`https://github.com/neosun100/zixuan-fenxi.git`
+远程：`https://github.com/will6443211/cursor.git`
 
-本机没有 GitHub 写权限时，在能登录 `neosun100` 的环境执行：
+本机没有写权限时：
 
 ```bash
-# 先在 GitHub 建空私有库 zixuan-fenxi，或直接：
 GH_TOKEN=ghp_xxx ./connect_github.sh
 ```
 

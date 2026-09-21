@@ -6879,8 +6879,8 @@ def main():
     lines.append(f"# 今日自选 {now.strftime('%Y-%m-%d %H:%M')} 北京")
     lines.append("")
     lines.extend(overnight_news_lines(now, ovn_scan))
-    lines.append("## 0 能不能买")
-    lines.append(f"**可以买：{buy_line}**")
+    lines.append("## 0 今日必买")
+    lines.append(f"**今日必买：{buy_line}**")
     if pick_name:
         lines.append(f"**最适合买：{pick_name}（{pick_why}）**")
     else:
@@ -6923,7 +6923,7 @@ def main():
     lines.append("### 0b 打板（今首板不追，昨板接力才看）")
     lines.append("- 今天刚封的**首板默认不追**。能买的只有：昨首板今天冲二（一进二）、昨烂板弱转强、龙头断板回踩（龙回头）。二进三及以上只盯不打。")
     lines.append("- 尾盘打板/隔夜套利不走这一仓，看 **第1节 尾盘打板**。")
-    lines.append("- 看哪里：本表上面「打板」行；第9节打板排名里「打板闸=可小仓」；首页「能不能买」里带「打板」的名字。")
+    lines.append("- 看哪里：本表上面「打板」行；第9节打板排名里「打板闸=可小仓」；首页「今日必买」里带「打板」的名字。")
     if daban_ok:
         lines.append("- **本轮打板可小仓：** " + "、".join(
             f"{x[0]}({(daban_by_code.get(x[7]) or {}).get('setup') or '打板'})" for x in daban_ok
@@ -7089,8 +7089,8 @@ def main():
             break
     if high_no:
         lines.append("- 高分但不买：" + "；".join(high_no) + "。分高≠能买")
-    lines.append("- 能不能买以第0节「可以买/买点」为准。TOP5只是可小仓里按值分谁更靠前，值分高不能推翻闸，也不能把出货票洗白。尾盘打板只在第1节，不进可以买。")
-    lines.append("- 可以买=总闸过了才能开仓。TOP5只排可小仓（按值分）；观察/可试仓再热也只进备选池，不把TOP5凑满。值分：闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价。均线分只拉开能买里谁更稳，不能翻盘。")
+    lines.append("- 今日必买以第0节过闸名单为准。TOP5只是可小仓里按值分谁更靠前，值分高不能推翻闸，也不能把出货票洗白。尾盘打板只在第1节，不进今日必买。")
+    lines.append("- 今日必买=总闸过了才能开仓。TOP5只排可小仓（按值分）；观察/可试仓再热也只进备选池，不把TOP5凑满。值分：闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价。均线分只拉开能买里谁更稳，不能翻盘。")
     lines.append("- 值分去重：游资/打板/ETF 的盘面分里已含板块资金和竞价质量，值分里主线热度只按0.45计、竞价不再重复加（竞价列显示0即此意，判别仍照常用）；趋势用买点分，不含这两项，全额计。")
     lines.append("- 判别加了滞后带：刚过线要连续两次达标才给可小仓。降级、骗炮、回避立即生效。情绪退潮：打板空仓，游资抬门槛只做低位，趋势不追热，不再一刀切关掉游资。")
     lines.append("- 打板仓：今首板不追。只做昨首板一进二、昨烂板弱转强、板内龙头回头。昨一字不打。赚钱效应差或情绪退潮时打板不新开。打板可小仓不要求 7a。")
@@ -7238,7 +7238,7 @@ def main():
         return "弱"
 
     lines.append(f"## 4 个股一览（全池{len(t1_all)}只，趋势{n_trend}+游资{n_youzi}）")
-    lines.append("买点=能不能买。分=均线健康。买点分=九列。值分=闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价±3。买点分不重复加。竞价列只展示判断，不单独改买点。表一买点与明细标的相同，只保留明细（含买点表多出来的竞价/值序/为什么）。")
+    lines.append("买点=今日必买。分=均线健康。买点分=九列。值分=闸+主线热+盘面(趋势买点分/游资7a)×0.28+均线分×0.18+竞价±3。买点分不重复加。竞价列只展示判断，不单独改买点。表一买点与明细标的相同，只保留明细（含买点表多出来的竞价/值序/为什么）。")
     lines.append("### 表一明细（买点+均线九列）")
     lines.append("| 序 | 股票 | 买点 | 竞价 | 类型 | 现价 | 今涨 | 分 | 买点分 | 值分 | 值序 | 均线 | 量比 | 距20日高 | 斜率 | 回踩 | 相对强度 | 板块RS | 量价 | ORB | 昨高 | 布林 | 换手分位 | 仓位 | 为什么 |")
     lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
@@ -7454,7 +7454,7 @@ def main():
         lines.append(f"**最适合买：{pick_name}（{pick_why}）**")
     else:
         lines.append("**最适合买：没有。不开新仓**")
-    lines.append(f"**今日可以买：{buy_line}**")
+    lines.append(f"**今日必买：{buy_line}**")
     lines.append(f"**今日最值得买 TOP5：{top5_line}（仅可小仓，表同第0节）**")
     lines.append(f"**备选池：{alt_line}**")
     lines.append("| 仓 | 股票 | 价 | 今涨 | 分 | 主线 | 依据 | 适合度 | 结论 | 止损 | 止盈 |")
@@ -7574,7 +7574,7 @@ def main():
         "竞价可以挂卖。一字涨停可暂留，其余不隔第二夜。不进第0节可以买。"
     )
     lines.append("- 散户T+1：" + clk["retail"])
-    lines.append("- 只标钟，不改第0节闸，也不把尾盘打板写进可以买：过闸才能买，没过闸这个钟不能把观察票洗成可以买。")
+    lines.append("- 只标钟，不改第0节闸，也不把尾盘打板写进今日必买：过闸才能买，没过闸这个钟不能把观察票洗成今日必买。")
     lines.append("")
     out = "\n".join(lines)
     os.makedirs(os.path.join(ROOT, "reports"), exist_ok=True)
@@ -7803,7 +7803,7 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         f"<style>{css}</style></head><body>",
         "<nav class=toc>",
         "<a href='#snews'>最新资讯</a>",
-        "<a href='#s0'>0 能不能买</a>",
+        "<a href='#s0'>0 今日必买</a>",
         "<a href='#s1'>1 尾盘打板</a>",
         "<a href='#s2'>2 板块资金</a>",
         "<a href='#s3'>3 集合竞价</a>",
@@ -8031,7 +8031,8 @@ if __name__ == "__main__":
         assert gen.find("## 14 买点钟") > gen.find("## 13 买点明细")
         assert "### 0a 买点钟" not in gen
         assert "### 0e 最新资讯" not in gen
-        assert gen.find("lines.extend(overnight_news_lines") < gen.find('lines.append("## 0 能不能买")')
+        assert gen.find("lines.extend(overnight_news_lines") < gen.find('lines.append("## 0 今日必买")')
+        assert "## 0 能不能买" not in gen
         assert _em_diff({"data": {"diff": [{"f12": "1"}]}})[0]["f12"] == "1"
         assert _em_diff({"data": {"diff": {"0": {"f12": "2"}}}})[0]["f12"] == "2"
         assert _em_diff({"data": {"diff": None}}) == []

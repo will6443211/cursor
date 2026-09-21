@@ -468,7 +468,7 @@
       const clockEl = document.getElementById("clock");
       if (clockEl) clockEl.textContent = fmtBj(t);
       const clk = d.buy_clock || {};
-      document.getElementById("meta").textContent = (clk.action ? ("下手：" + clk.slot + " " + clk.action + " · ") : "") + "先看第0节「能不能买」 · 大盘是本轮快照当时价";
+      document.getElementById("meta").textContent = (clk.action ? ("下手：" + clk.slot + " " + clk.action + " · ") : "") + "先看第0节「今日必买」 · 大盘是本轮快照当时价";
       paintIdxTape(d);
       const top5 = (d.top5 || []).map(x => x.name).join("、") || "—";
       const pick = d.pick_name || "没有";
@@ -534,7 +534,7 @@
       const clockCls = /主买点|真开仓|可尾盘|主卖点/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(mealB) + String(mealS) + mealTxt) ? cls("可") : "";
       const cards = [
         ["最新资讯", newsTxt, "", ""],
-        ["能不能买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
+        ["今日必买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
         ["总闸", d.buy_today || "—", cls(d.buy_today), ""],
         ["首选", pick, "", ""],
         ["最值得买", top5, "", ""],

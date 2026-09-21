@@ -505,14 +505,13 @@
       else if (meal.phase === "too_late") mealTxt = "14:57后不追";
       const newsEl = document.getElementById("ovn-news");
       if (newsEl) {
-        let items = [];
-        if (meal.phase === "buy" && mealOk.length) items = mealOk.map(n => "可尾盘 " + n);
-        else if (meal.phase === "sell" && mealHold.length) items = mealHold.map(n => "早盘清 " + n);
-        else if (mealHold.length) items = mealHold.map(n => "待卖 " + n);
-        else if (meal.phase === "wait" && mealWatch.length) items = mealWatch.map(n => "14:30待确认 " + n);
-        if (!items.length) items = [mealTxt];
-        newsEl.innerHTML = "<b>尾盘打板</b><ul>" + items.map(x => `<li>${hx(x)}</li>`).join("") + "</ul>";
-        newsEl.title = mealTxt;
+        const bits = String(desk.news || "").split(/[；;]/).map(s => s.trim()).filter(Boolean);
+        if (!bits.length) {
+          newsEl.innerHTML = "<b>最新资讯</b><ul><li>快讯暂缺</li></ul>";
+        } else {
+          newsEl.innerHTML = "<b>最新资讯</b><ul>" + bits.map(x => `<li>${hx(x)}</li>`).join("") + "</ul>";
+        }
+        newsEl.title = bits.join("；") || "快讯暂缺";
       }
       const nowAct = clk.now || {};
       const mealB = nowAct.meal_buy || clk.meal || "";
@@ -532,6 +531,7 @@
       const clockCls = /主买点|真开仓|可尾盘|主卖点/.test(String(nowAct.youzi_buy || clk.youzi || "") + String(mealB) + String(mealS) + mealTxt) ? cls("可") : "";
       const cards = [
         ["今日必买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
+        ["尾盘打板", mealTxt, mealCls, ""],
         ["总闸", d.buy_today || "—", cls(d.buy_today), ""],
         ["首选", pick, "", ""],
         ["最值得买", top5, "", ""],

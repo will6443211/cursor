@@ -22,10 +22,29 @@ UA = (
 # 拉不到数据时静默吞掉，会让报告拿着残缺数据照样给出一副很确定的结论。
 # 这里统一做退避重试，并把失败次数记下来在报告里报出去。
 FETCH_FAIL = {}
+FLOW_STALE = []
 
 
 def _note_fail(tag):
     FETCH_FAIL[tag] = FETCH_FAIL.get(tag, 0) + 1
+
+
+def _note_stale(tag):
+    if tag not in FLOW_STALE:
+        FLOW_STALE.append(tag)
+
+
+def _em_diff(d):
+    """东财 clist/ulist 的 diff 有时是 list，有时是 {0:row,1:row}。当成 key 迭代会整表吃空。"""
+    data = (d or {}).get("data") or {}
+    diff = data.get("diff")
+    if isinstance(diff, dict):
+        rows = list(diff.values())
+    elif isinstance(diff, list):
+        rows = diff
+    else:
+        rows = []
+    return [x for x in rows if isinstance(x, dict)]
 
 
 def _get(url, headers, timeout, tries=3):
@@ -42,9 +61,27 @@ def _get(url, headers, timeout, tries=3):
     raise last
 
 
-def http(url, gbk=False, timeout=12, tries=3):
-    b = _get(url, {"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"}, timeout, tries)
-    return b.decode("gbk", "replace") if gbk else json.loads(b)
+def http(url, gbk=False, timeout=12, tries=4):
+    headers = {
+        "User-Agent": UA,
+        "Referer": "https://quote.eastmoney.com/",
+        "Accept": "*/*",
+    }
+    last = None
+    for i in range(tries):
+        try:
+            b = _get(url, headers, timeout, 1)
+            if gbk:
+                return b.decode("gbk", "replace")
+            if not (b or b"").strip():
+                raise ValueError("empty body")
+            return json.loads(b)
+        except Exception as e:
+            last = e
+            if i < tries - 1:
+                import time as _t
+                _t.sleep(0.5 * (2 ** i))
+    raise last
 
 
 NAME_CACHE = {}  # code -> name。给 ST 判定用，避免各处再传 name
@@ -347,11 +384,13 @@ def cn_flow_live(now=None):
 
 
 def em_flow_hosts(path, now=None):
-    """资金接口。开盘只用 push2；休市 live 常关，delay 就是昨收最新。"""
+    """资金接口。开盘只用实时（push2 + 备用节点）；休市 live 常关，delay 就是昨收最新。"""
     live = f"https://push2.eastmoney.com{path}"
+    live2 = f"https://82.push2.eastmoney.com{path}"
+    delay = f"https://push2delay.eastmoney.com{path}"
     if cn_flow_live(now):
-        return (live,)
-    return (live, f"https://push2delay.eastmoney.com{path}")
+        return (live, live2)
+    return (live, live2, delay)
 
 
 def youzi_late(now=None):
@@ -1543,7 +1582,7 @@ def _flow_cache_save(inn=None, outf=None, stocks=None):
 def stock_flow(stocks):
     """主力/超大单净流入代理。东财暗盘不是真成交，这是可复现口径。
     开盘只用实时；休市先爬 live，连不上再用 delay（昨收），最后才同交易日缓存。
-    盘中 delay 是滞后快照，不用。隔日缓存不开盘后冒充当天。"""
+    盘中 delay 不用。实时抖动时用今日已成功缓存，隔日缓存不开盘后冒充当天。"""
     out = {}
     ids = [em_secid(s) for s in stocks]
     fields = "f12,f14,f62,f184,f66,f69,f164,f165"
@@ -1566,27 +1605,32 @@ def stock_flow(stocks):
     for host in hosts:
         for i in range(0, len(ids), 18):
             chunk = ",".join(ids[i:i + 18])
-            url = f"{host}?fltt=2&np=1&fields={fields}&secids={chunk}"
+            url = f"{host}?fltt=2&invt=2&np=1&fields={fields}&secids={chunk}"
             try:
-                d = http(url, timeout=10)
+                d = http(url, timeout=12)
             except Exception:
                 continue
-            eat((d.get("data") or {}).get("diff") or [])
+            eat(_em_diff(d))
         if len(out) >= max(1, int(len(ids) * 0.5)):
             break
     miss = [s["code"] for s in stocks if s.get("code") not in out]
-    if miss and not cn_flow_live():
+    if miss:
         cached = (_flow_cache_load(same_session=True) or {}).get("stocks") or {}
+        n_fill = 0
         for code in miss:
             if stock_flow_ok(cached.get(code)):
                 row = dict(cached[code])
                 row["_from_cache"] = True
                 out[code] = row
+                n_fill += 1
+        if n_fill:
+            _note_stale("个股资金用今日缓存")
         miss = [s["code"] for s in stocks if s.get("code") not in out]
     if stocks and len(out) < max(1, int(len(ids) * 0.5)):
         _note_fail("个股资金")
-    if out:
-        _flow_cache_save(stocks=out)
+    live_rows = {k: v for k, v in out.items() if not v.get("_from_cache")}
+    if live_rows:
+        _flow_cache_save(stocks=live_rows)
     return out
 
 
@@ -1844,8 +1888,8 @@ def sector_flow():
     inn, out = [], []
     for host in hosts:
         try:
-            d = http(f"{host}?{base}&po=1", timeout=8)
-            for x in (d.get("data") or {}).get("diff") or []:
+            d = http(f"{host}?{base}&po=1", timeout=12)
+            for x in _em_diff(d):
                 inn.append(f"{x['f14']} {x['f3']:+}% 主力{float(x['f62'])/1e8:+.1f}亿 领{x.get('f204')}")
             if inn:
                 break
@@ -1853,22 +1897,24 @@ def sector_flow():
             continue
     for host in hosts:
         try:
-            d2 = http(f"{host}?{base}&po=0", timeout=8)
-            for x in (d2.get("data") or {}).get("diff") or []:
+            d2 = http(f"{host}?{base}&po=0", timeout=12)
+            for x in _em_diff(d2):
                 out.append(f"{x['f14']} {x['f3']:+}% 主力{float(x['f62'])/1e8:+.1f}亿")
             if out:
                 break
         except Exception:
             continue
-    if not inn and not out and not cn_flow_live():
+    used_cache = False
+    if not inn and not out:
         cached = _flow_cache_load(same_session=True) or {}
         inn = list(cached.get("inn") or [])
         out = list(cached.get("out") or [])
         if inn or out:
-            _note_fail("板块资金用缓存")
+            used_cache = True
+            _note_stale("板块资金用今日缓存")
     if not inn and not out:
         _note_fail("板块资金")
-    if inn or out:
+    if (inn or out) and not used_cache:
         _flow_cache_save(inn=inn, outf=out)
     return inn, out
 
@@ -5915,7 +5961,9 @@ def analyze_one(code, board="自选", kind_hint=""):
 
 
 def main():
-    global WL
+    global WL, FETCH_FAIL
+    FETCH_FAIL = {}
+    FLOW_STALE.clear()
     WL = load_watchlist()
     gate_state_load()
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
@@ -5967,8 +6015,6 @@ def main():
 
     inn, outf = sector_flow()
     sector_flow_ok = bool(inn or outf)
-    if not sector_flow_ok:
-        _note_fail("板块资金")
     etf_items = []
     for e in etfs:
         ee = dict(e)
@@ -5977,8 +6023,6 @@ def main():
         etf_items.append(ee)
     flows = stock_flow(stocks + etf_items)
     n_flow = sum(1 for x in stocks if stock_flow_ok(flows.get(x["code"])))
-    if stocks and n_flow < max(3, int(len(stocks) * 0.4)):
-        _note_fail("个股资金")
     try:
         ovn_scan = overnight_scan(stocks, etfs)
     except Exception:
@@ -7007,13 +7051,15 @@ def main():
     lines.append("- 竞价涨停/近板开后砸盘→不买（出货）。竞价质量已并入各战法盘面分；量比和换手都按时段归一（早盘成交前置，10:00的量比1.5不等于14:30的1.5）。")
     lines.append("- 表一看「买点」列：可小仓=能买，观察=盯着，不买/不追=不能买。分只是均线健康。")
     miss_q = [x["name"] for x in stocks + etfs if not live.get(x["code"])]
-    if miss_q or FETCH_FAIL:
+    if miss_q or FETCH_FAIL or FLOW_STALE:
         bits = []
         if miss_q:
             bits.append("无行情（停牌/取不到）：" + "、".join(miss_q[:8]))
         if FETCH_FAIL:
             bits.append("取数失败：" + "、".join(f"{k}×{v}" for k, v in FETCH_FAIL.items()))
-        lines.append("- **数据完整性**：" + "；".join(bits) + "。这些票的结论不可用，别当成「没信号」。")
+        if FLOW_STALE:
+            bits.append("口径备注：" + "、".join(FLOW_STALE) + "（同交易日已成功缓存，不是昨收delay）")
+        lines.append("- **数据完整性**：" + "；".join(bits) + "。取数失败的票结论不可用，别当成「没信号」。")
 
     # ---- 1 尾盘打板（独立仓） ----
     lines.append("## 1 尾盘打板（尾盘买、次日早盘卖；不进第0节可以买）")
@@ -7558,7 +7604,7 @@ def main():
             "high": mood.get("high"), "n_lian": mood.get("n_lian"),
             "env": {k: mood.get("env", {}).get(k) for k in ("n", "prem", "adv", "green", "ok")},
         },
-        "data_health": {"missing_quote": miss_q, "fetch_fail": FETCH_FAIL},
+        "data_health": {"missing_quote": miss_q, "fetch_fail": FETCH_FAIL, "stale": FLOW_STALE},
         "idx_tape": idx_tape,
     }
     open(os.path.join(ROOT, "reports", "latest.json"), "w", encoding="utf-8").write(
@@ -7923,6 +7969,9 @@ if __name__ == "__main__":
         assert "### 0a 买点钟" not in gen
         assert "### 0e 最新资讯" not in gen
         assert gen.find("lines.extend(overnight_news_lines") < gen.find('lines.append("## 0 能不能买")')
+        assert _em_diff({"data": {"diff": [{"f12": "1"}]}})[0]["f12"] == "1"
+        assert _em_diff({"data": {"diff": {"0": {"f12": "2"}}}})[0]["f12"] == "2"
+        assert _em_diff({"data": {"diff": None}}) == []
         assert overnight_meal_phase(t(14, 45)) == "buy"
         assert overnight_meal_phase(t(9, 40)) == "sell"
         assert overnight_meal_phase(t(12, 0)) == "wait"

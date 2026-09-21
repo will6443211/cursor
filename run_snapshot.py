@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Hourly watchlist: external + index + sector flow + MA/volume screen + buy/no-buy."""
-import json, urllib.request, urllib.parse, hashlib, datetime, os, sys, html, re, subprocess, webbrowser
+import json, urllib.request, urllib.parse, hashlib, datetime, os, sys, html, re, subprocess, webbrowser, difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -1798,7 +1798,13 @@ NEWS_KW_FOREIGN = re.compile(
 )
 NEWS_KW_DOMESTIC = re.compile(
     r"央行|证监会|国务院|发改委|工信部|财政部|住建|公积金|A股|沪指|上证|深成|创业板|"
-    r"北交所|沪深|两市|涨停|连板|主力资金|降准|印发|国内|多地|住建部|商务部"
+    r"北交所|沪深|两市|涨停|连板|主力资金|降准|印发|国内|多地|住建部|商务部|"
+    r"解禁|限售|龙虎榜|融资余额"
+)
+NEWS_SRC_PREFIX = re.compile(
+    r"^(财联社|每日经济新闻|证券时报|证券日报|上海证券报|中国证券报|第一财经|"
+    r"同花顺|钛媒体App|钛媒体|万得资讯|万得|Wind|东方财富|新浪财经|科股宝)"
+    r"\d*月?\d*日?(电|讯|播报)?[，,、:：]?"
 )
 
 
@@ -1807,25 +1813,46 @@ def _news_title(it):
     return re.sub(r"<[^>]+>", "", title)
 
 
-def _news_key(t):
-    s = re.sub(r"^(财联社|每日经济新闻|证券时报|证券日报|上海证券报|中国证券报|第一财经)\d*月?\d*日?电?，?", "", t or "")
-    s = re.sub(r"(今日|昨日|将|据报道|据悉|最新)", "", s)
+def _news_norm(t):
+    s = re.sub(r"<[^>]+>", "", t or "").strip()
+    s = NEWS_SRC_PREFIX.sub("", s)
+    s = re.sub(r"(今日|昨日|将|据报道|据悉|最新|一览)", "", s)
+    s = re.sub(r"亿元", "亿", s)
     s = re.sub(r"[^\w\u4e00-\u9fff]+", "", s)
-    return s[:16]
+    return s
+
+
+def _news_key(t):
+    return _news_norm(t)[:28]
+
+
+def _news_near(a, b):
+    if not a or not b:
+        return False
+    if a == b or a in b or b in a:
+        return True
+    short, long = (a, b) if len(a) <= len(b) else (b, a)
+    if len(short) >= 10 and short[:10] == long[:10]:
+        return True
+    return difflib.SequenceMatcher(None, a[:40], b[:40]).ratio() >= 0.82
 
 
 def _news_uniq(xs):
-    out, seen = [], set()
+    out, seen, norms = [], set(), []
     skip = re.compile(r"人气板块及个股点评|^\d+月\d+日涨停分析$|^涨停分析$")
     for t in xs:
         if not t or skip.search(t):
             continue
-        k = _news_key(t)
+        nrm = _news_norm(t)
+        k = nrm[:28]
         if t in seen or (k and k in seen):
+            continue
+        if any(_news_near(nrm, p) for p in norms):
             continue
         seen.add(t)
         if k:
             seen.add(k)
+        norms.append(nrm)
         out.append(t)
     return out
 
@@ -1833,10 +1860,15 @@ def _news_uniq(xs):
 def _news_pick(items, n, seen):
     out = []
     for t in items or []:
-        k = _news_key(t) or t
+        nrm = _news_norm(t)
+        k = nrm[:28] or t
         if not t or k in seen:
             continue
+        if any(_news_near(nrm, s) for s in seen if len(s) >= 10):
+            continue
         seen.add(k)
+        if nrm:
+            seen.add(nrm)
         out.append(t)
         if len(out) >= n:
             break
@@ -1864,7 +1896,7 @@ def _cls_headline(it):
 
 
 def crawl_macro_news():
-    """国内+国外隔夜快讯：财联社电报为主，东财/新浪补栏。"""
+    """国内+国外隔夜快讯：财联社为主，东财/新浪/同花顺/钛媒体/万得解禁补栏，标题去重。"""
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     foreign, domestic, mixed = [], [], []
     sources = []
@@ -1873,6 +1905,9 @@ def crawl_macro_news():
         "Referer": "https://www.cls.cn/telegraph",
         "Accept": "application/json, text/plain, */*",
     }
+
+    def news_get(url, referer, timeout=10):
+        return _get(url, {"User-Agent": UA, "Referer": referer, "Accept": "*/*"}, timeout, 2)
 
     def take_cls(dest, extra=None, path="/api/cache", n=20):
         params = {"appName": "CailianpressWeb", "os": "web", "sv": "8.7.9"}
@@ -1930,6 +1965,102 @@ def crawl_macro_news():
         except Exception:
             _note_fail("隔夜新闻")
 
+    def take_ths(dest, n=18):
+        url = (
+            "https://news.10jqka.com.cn/tapp/news/push/stock/"
+            f"?page=1&tag=&track=website&pagesize={n}"
+        )
+        try:
+            d = json.loads(news_get(url, "https://news.10jqka.com.cn/"))
+            lst = ((d.get("data") or {}).get("list") or [])
+            got = 0
+            for it in lst:
+                t = _news_title(it) or (it.get("digest") or "").strip()
+                t = re.sub(r"<[^>]+>", "", t)
+                if t:
+                    dest.append(t)
+                    got += 1
+                if got >= n:
+                    break
+            if got:
+                sources.append("同花顺")
+        except Exception:
+            _note_fail("同花顺新闻")
+
+    def take_tmt(dest, n=16):
+        got = 0
+        try:
+            raw = news_get("https://www.tmtpost.com/nictation", "https://www.tmtpost.com/")
+            page = raw.decode("utf-8", "replace")
+            titles = re.findall(r"【<span[^>]*>([^<]{6,120})</span>】", page)
+            if not titles:
+                titles = re.findall(
+                    r'class="title"[^>]*>[\s\S]*?<span[^>]*>([^<]{8,120})</span>', page
+                )
+            for t in titles:
+                t = html.unescape(t).strip()
+                if t:
+                    dest.append(t)
+                    got += 1
+                if got >= n:
+                    break
+        except Exception:
+            titles = []
+        if got < 4:
+            try:
+                raw = news_get("https://www.tmtpost.com/feed", "https://www.tmtpost.com/")
+                page = raw.decode("utf-8", "replace")
+                for t in re.findall(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", page):
+                    t = html.unescape(t).strip()
+                    if not t or t.startswith("钛媒体"):
+                        continue
+                    dest.append(t)
+                    got += 1
+                    if got >= n:
+                        break
+            except Exception:
+                pass
+        if got:
+            sources.append("钛媒体")
+        else:
+            _note_fail("钛媒体新闻")
+
+    def take_wind(dest):
+        """万得没有公开快讯口。解禁表走东财数据中心（和 Wind 解禁一览同一口径）。"""
+        d = now.date()
+        if d.weekday() >= 5:
+            d = d + datetime.timedelta(days=(7 - d.weekday()))
+        day = d.strftime("%Y-%m-%d")
+        url = (
+            "https://datacenter-web.eastmoney.com/api/data/v1/get?"
+            "sortColumns=LIFT_MARKET_CAP&sortTypes=-1&pageSize=40&pageNumber=1"
+            "&reportName=RPT_LIFT_STAGE&columns=ALL&source=WEB&client=WEB"
+            f"&filter=(FREE_DATE%3D'{day}')"
+        )
+        try:
+            j = json.loads(_get(
+                url, {"User-Agent": UA, "Referer": "https://data.eastmoney.com/dxf/detail.html"}, 10, 2
+            ))
+            rows = ((j.get("result") or {}).get("data") or [])
+            names, total = [], 0.0
+            for x in rows:
+                cap = float(x.get("LIFT_MARKET_CAP") or 0)  # 万元
+                if cap <= 0:
+                    continue
+                total += cap
+                nm = (x.get("SECURITY_NAME_ABBR") or "").strip()
+                if nm and len(names) < 3:
+                    names.append(f"{nm}{cap / 1e4:.2f}亿元".replace(".00亿元", "亿元"))
+            yi = total / 1e4
+            if yi <= 0:
+                return
+            dest.append(f"A股限售股解禁一览：{yi:.2f}亿元市值限售股今日解禁")
+            if names:
+                dest.append("今日解禁市值居前：" + "、".join(names))
+            sources.append("万得")
+        except Exception:
+            _note_fail("万得解禁")
+
     cls_all, cls_watch = [], []
     take_cls(cls_all, {"name": "telegraph"}, "/api/cache", 32)
     take_cls(foreign, {"category": "hk_us", "refresh_type": "1", "rn": "24"}, "/v1/roll/get_roll_list", 18)
@@ -1954,9 +2085,20 @@ def crawl_macro_news():
     take_sina(153, 2516, mixed, 16)
     take_sina(153, 2518, foreign, 14)
     take_sina(153, 2515, foreign, 12)
+    take_ths(mixed, 18)
+    take_tmt(mixed, 16)
+    take_wind(mixed)
     split_pool(mixed, default_dom=False)
 
     domestic, foreign = _news_uniq(domestic), _news_uniq(foreign)
+
+    def pin(xs, pat):
+        hit, rest = [], []
+        for t in xs:
+            (hit if pat.search(t) else rest).append(t)
+        return hit + rest
+
+    domestic = pin(domestic, re.compile(r"解禁|限售股"))
     policy = _news_uniq([t for t in domestic + foreign if NEWS_KW_POLICY.search(t)])
     src = "、".join(dict.fromkeys(sources)) or "新浪财经滚动"
     out = {

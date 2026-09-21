@@ -4084,13 +4084,14 @@ def _bar_nexts(hist, date_s):
 
 
 def _day_done(now, date_s):
-    """日K收盘是否已经定格。盘中当天那根K的收盘还是现价，不能当次日收。"""
+    """日K收盘是否已经定格。盘中当天那根K的收盘还是现价，不能当次日收。
+    A股 15:00 收盘，跟 cn_session_closed 对齐；不要拖到 15:05，否则 15:00 那轮快照永远待收盘。"""
     today = now.strftime("%Y-%m-%d")
     if date_s < today:
         return True
     if date_s > today:
         return False
-    return now.hour > 15 or (now.hour == 15 and now.minute >= 5)
+    return cn_session_closed(now)
 
 
 def _fwd_from(hist, date_s, px, now=None):
@@ -7145,7 +7146,8 @@ def main():
         "口径：每个交易日每只票只记**第一次可小仓**（入选日+入选价），盘中反复跑不再追加。"
         "盘中09:30–14:50入选，成交价=入选价；收盘后/盘前入选，成交价=次日开。"
         f"A股T+1，**胜负=次日收÷成交价，已扣成本{cost_txt}%**。"
-        "隔夜=次日开相对入选价，只作隔夜参考。",
+        "隔夜=次日开相对入选价，只作隔夜参考。"
+        "次日收要等那天 15:00 收盘后那一轮快照才填，盘中和 15:00 前都是待收盘。",
         f"- 还没有可小仓留档（本次新增判别 {n_j} 条）。出现今日必买之后，这里会列出入选日和入选价。",
         bt,
     )
@@ -8098,6 +8100,10 @@ if __name__ == "__main__":
         assert overnight_meal_phase(t(12, 0)) == "wait"
         assert youzi_late(t(14, 45)) is True
         assert youzi_late(t(10, 0)) is False
+        assert _day_done(t(14, 59), "2026-09-21") is False
+        assert _day_done(t(15, 0), "2026-09-21") is True
+        assert _day_done(t(15, 1), "2026-09-21") is True
+        assert _day_done(t(10, 0), "2026-09-18") is True
         meal_recs = [{
             "date": "2026-09-18", "time": "14:45", "code": "000001", "name": "平安银行",
             "call": "可尾盘", "px": 10.0,

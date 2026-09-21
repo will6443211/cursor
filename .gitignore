@@ -4,3 +4,7 @@ reports/
 自选快照.html
 自选快照.pdf
 .watch_secret
+watch_api.log
+*.log
+.github_token
+.git-credentials

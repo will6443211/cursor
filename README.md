@@ -46,7 +46,15 @@ python3 run_snapshot.py
 `reports/ztpool/`（涨停池历史缓存）、`reports/overnight_cache.json`（隔夜报价缓存）。
 删掉不影响运行，但复盘样本会丢。
 
-## 回滚
+## Git
 
-本目录是 git 仓库。`git log --oneline` 看版本，`git checkout .` 回到上一次提交，
-完整包备份在 `/opt/zixuan-backup/`。
+本目录是 git 仓库。远程：`https://github.com/neosun100/zixuan-fenxi.git`
+
+本机没有 GitHub 写权限时，在能登录 `neosun100` 的环境执行：
+
+```bash
+# 先在 GitHub 建空私有库 zixuan-fenxi，或直接：
+GH_TOKEN=ghp_xxx ./connect_github.sh
+```
+
+`git log --oneline` 看版本，`git checkout .` 回到上一次提交。完整包备份在 `/opt/zixuan-backup/`。

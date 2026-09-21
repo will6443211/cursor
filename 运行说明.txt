@@ -26,3 +26,4 @@
 - 打板：今首板默认不追，昨板接力（一进二/弱转强/龙回头）才可能可小仓。看第0节表「打板」行和第0c、第9节
 - 资金：9:30连续竞价后只用东财实时主力；休市/竞价用昨收（live优先，连不上再用delay）。盘中delay不用，周五缓存周一开盘后不用。板块热度与主线可做/回避是同一笔当日主力；全市场涨停情绪另算
 - 回滚到 20260920v3：cp archive/20260920v3/run_snapshot.py ./run_snapshot.py  （index.html 同目录）
+- Git：本地已接 origin https://github.com/neosun100/zixuan-fenxi.git ；GitHub 上还没有这个库时，用 GH_TOKEN=… ./connect_github.sh 建私有库并推送

@@ -70,6 +70,7 @@
       padding:8px 10px; min-width:0; }
     #cards .card { min-height:108px; display:flex; flex-direction:column; }
     .card .k { font-size:12px; color:var(--muted); }
+    .card .when { font-size:11px; color:#c5c2b6; margin-top:2px; line-height:1.35; }
     #cards .card .v { flex:1; font-size:13px; }
     .card .v { font-size:14px; font-weight:650; margin-top:6px; line-height:1.4;
       overflow-wrap:anywhere; color:#fff; }
@@ -136,7 +137,7 @@
       .top h1 { font-size:28px; }
       .clock { font-size:16px; }
       .card { min-height:auto; }
-      #cards .card { min-height:112px; }
+      #cards .card { min-height:128px; }
       .toolbar input { max-width:168px; font-size:14px; }
       .idx-chip { font-size:12px; }
     }
@@ -154,7 +155,7 @@
       .clock { font-size:14px; }
       .meta { font-size:12px; }
       .cards { display:flex; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; }
-      #cards .card { flex:0 0 148px; width:148px; min-width:148px; min-height:108px; }
+      #cards .card { flex:0 0 168px; width:168px; min-width:168px; min-height:124px; }
       .links { margin:4px 0 0; font-size:12px; }
       /* 苹果 Chrome 的 iframe 会盖住页面上的 fixed 底栏，搜索分析改放顶栏，报告改内嵌滚动 */
       .top .toggle { background:#f2f1ec; color:#111110; }
@@ -516,16 +517,34 @@
         }
         newsEl.title = bits.join("；") || "快讯暂缺";
       }
+      function bookNames(kind) {
+        const books = d.buy_books || {};
+        const mapped = {trend: "趋势", youzi: "游资", daban: "打板", etf: "ETF"};
+        const arr = books[kind];
+        if (arr && arr.length) return arr.join("、");
+        const prefix = mapped[kind];
+        const line = String(d.buy_line || "");
+        for (const p of line.split("；")) {
+          const s = p.trim();
+          if (prefix && (s.startsWith(prefix + " ") || s.startsWith(prefix + "："))) {
+            return s.slice(prefix.length).replace(/^[\s：]+/, "");
+          }
+        }
+        return "";
+      }
+      const trendNames = bookNames("trend");
+      const youziNames = bookNames("youzi");
       const cards = [
-        ["今日必买", d.buy_line || (d.buy_names || []).join("、") || "暂无，不开新仓", cls((d.buy_names||[]).length ? "可" : "不"), ""],
-        ["尾盘打板", mealTxt, mealCls, ""],
-        ["最值得买", top5, "", ""],
-        ["可做主线", (d.doable || []).join("、") || "—", "ok", ""],
-        ["回避主线", avoidBits, "bad", ""],
-        ["次日关注", "板块 " + boards + " · 个股 " + names, "", ""],
+        ["今日必买-趋势", "最佳 10:00–10:30 · 13:00–13:30", trendNames || "暂无，不开新仓", trendNames ? cls("可") : cls("不"), ""],
+        ["今日必买-游资", "最佳 09:35–10:15", youziNames || "暂无，不开新仓", youziNames ? cls("可") : cls("不"), ""],
+        ["尾盘打板", "最佳 14:40–14:55", mealTxt, mealCls, ""],
+        ["最值得买", "", top5, "", ""],
+        ["可做主线", "", (d.doable || []).join("、") || "—", "ok", ""],
+        ["回避主线", "", avoidBits, "bad", ""],
+        ["次日关注", "", "板块 " + boards + " · 个股 " + names, "", ""],
       ];
-      document.getElementById("cards").innerHTML = cards.map(([k,v,c,extra]) =>
-        `<div class="card ${extra||""}"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`
+      document.getElementById("cards").innerHTML = cards.map(([k, when, v, c, extra]) =>
+        `<div class="card ${extra||""}"><div class="k">${k}</div>${when ? `<div class="when">${when}</div>` : ""}<div class="v ${c}">${v}</div></div>`
       ).join("");
       if (t && t !== lastSnap) {
         lastSnap = t;

@@ -7646,6 +7646,12 @@ def main():
         "small_on_line": small_on_line,
         "buy_names": buy_bits,
         "buy_line": buy_line,
+        "buy_books": {
+            "trend": [x[0] for x in trend_ok],
+            "youzi": [x[0] for x in youzi_ok],
+            "daban": [x[0] for x in daban_ok],
+            "etf": [x[0] for x in etf_ok],
+        },
         "top5": [{"name": x["name"], "role": x["role"], "score": round(x["score"], 1), "heat": x["heat"],
                   "sl": (exits_by_name.get(x["name"]) or {}).get("sl"),
                   "tp": (lambda e: f"{e['tp1']}/{e['tp2']}" if e else None)(exits_by_name.get(x["name"]))} for x in top5],

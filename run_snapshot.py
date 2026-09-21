@@ -6885,9 +6885,10 @@ def main():
         })
     try:
         n_j = journal_record(worth_all, now)
-        n_j += journal_record(meal_rows, now)
+        n_jm = journal_record(meal_rows, now)
     except Exception:
         n_j = 0
+        n_jm = 0
     try:
         review = journal_review(raw_by_code, 30, risk_cfg.get("cost_pct") or 0.1)
     except Exception:
@@ -7154,7 +7155,8 @@ def main():
         "隔夜胜率=次日开÷入选价，这是早盘兑现的参考。"
         "收盘胜率是拿到次日收，比策略10:00清完更晚，只作对照。"
         "不进今日必买。",
-        "- 还没有可尾盘留档。第1节筛出可尾盘后，这里会列出入选日和尾盘价。",
+        "- 还没有可尾盘留档。第1节筛出可尾盘后，这里会列出入选日和尾盘价。"
+        + (f"（本次新增 {n_jm} 条）" if n_jm else ""),
         mt,
     )
     lines.append("### 闸区分度（全部判别，对照用）")

@@ -1333,6 +1333,58 @@ def double_bottom(hist, q, green):
     return q["low"] >= swing * 0.985 and q["low"] <= swing * 1.03
 
 
+def fib_ratio(hist, q):
+    """20日波段回撤：0=仍在前高，1=打到前低。数据不够返回 None。"""
+    bars = list((hist or [])[-20:])
+    highs = [b[2] for b in bars]
+    lows = [b[3] for b in bars]
+    if q:
+        highs.append(q.get("high") or q.get("px"))
+        lows.append(q.get("low") or q.get("px"))
+    if not highs or not lows or not q or q.get("px") is None:
+        return None
+    hi, lo = max(highs), min(lows)
+    if hi <= lo:
+        return None
+    return (hi - q["px"]) / (hi - lo)
+
+
+def rsi_bull_div(hist, q, f=None):
+    """底背离：价创新低、RSI 不创新低。"""
+    bars = list(hist or [])
+    if q:
+        bars = bars + [[
+            None, None, q.get("high") or q.get("px"),
+            q.get("low") or q.get("px"), q["px"], 0,
+        ]]
+    if len(bars) < 16:
+        return False
+    closes = [b[4] for b in bars]
+    lows = [b[3] for b in bars]
+    n = len(bars)
+    troughs = []
+    start = max(1, n - 14)
+    for i in range(start, n - 1):
+        if lows[i] <= lows[i - 1] and lows[i] <= lows[i + 1]:
+            rv = rsi(closes[: i + 1])
+            if rv is not None:
+                troughs.append((lows[i], rv))
+    if len(troughs) < 2:
+        return False
+    a, b = troughs[-2], troughs[-1]
+    return b[0] < a[0] * 0.995 and b[1] >= a[1] + 2
+
+
+def vol_elevated(hist):
+    """近5日均量仍高于20日均量，未地量，下跌中继居多。"""
+    v = [b[5] for b in (hist or []) if b[5]]
+    if len(v) < 12:
+        return False
+    v20 = sma(v, 20) or sma(v, len(v))
+    v5 = sma(v[-5:], 5)
+    return bool(v20 and v5 and v5 > v20 * 1.1)
+
+
 def trend_annot(hist, q, f, flow=None, bench_r5=None, minutes=None):
     """表一标注：回踩/斜率/相对强度/量价/ATR仓位 + ORB/昨高/布林/换手分位。不进 buy 分，不进 name_call。"""
     out = {
@@ -4084,21 +4136,16 @@ def youzi_annot(s, q, f, hist, flow, mood, lhb):
 
 
 def index_left_weak(live, idx_hist):
-    """大盘环境：只压表三趋势可试仓，不改表一表二。"""
+    """大盘环境：只压趋势左侧可试仓。指数破MA20本身不够，要看见冲高回落才关。
+    游资左侧不走这条。不改表一表二。"""
     weak, reasons = False, []
     for code, name in (("000001", "上证"), ("399006", "创业板")):
         q = live.get(code)
-        hist = idx_hist.get(code) or []
         if q:
             shp = index_shape(q)
             if shp in ("高开低走", "低开冲高回落", "开后走弱"):
                 weak = True
                 reasons.append(f"{name}{shp}")
-        if q and hist:
-            ma20 = sma([b[4] for b in hist], 20)
-            if ma20 and q["px"] < ma20:
-                weak = True
-                reasons.append(f"{name}在MA20下")
     return weak, reasons
 
 
@@ -4122,19 +4169,10 @@ def consecutive_down(hist):
 
 
 def fib_retracement(hist, q):
-    """20日波段前高→前低回撤。0=仍在前高，1=打到前低。只标注，不参与打分/买卖。"""
-    bars = list(hist[-20:]) if hist else []
-    highs = [b[2] for b in bars]
-    lows = [b[3] for b in bars]
-    if q:
-        highs.append(q["high"])
-        lows.append(q["low"])
-    if not highs or not lows:
+    """20日波段前高→前低回撤。左侧可试仓用 38.2 当过滤，文案仍标注。"""
+    r = fib_ratio(hist, q)
+    if r is None:
         return "-"
-    hi, lo = max(highs), min(lows)
-    if hi <= lo or not q:
-        return "-"
-    r = (hi - q["px"]) / (hi - lo)
     pct = r * 100
     levels = [(0.236, "23.6"), (0.382, "38.2"), (0.5, "50"), (0.618, "61.8"), (0.786, "78.6")]
     near_lvl, near_name = min(levels, key=lambda x: abs(r - x[0]))
@@ -4148,7 +4186,9 @@ def fib_retracement(hist, q):
 
 
 def left_setup(s, q, f, yld, hist, flow, idx_weak=False):
-    """左侧超跌：位置低 + 止跌确认。不改表一/表二。loc/conf/左侧分公式不动；可试仓多确认。"""
+    """左侧超跌：位置低 + 止跌确认。不改表一/表二。loc/conf 公式不动。
+    可试仓加结构过滤：回撤到 38.2、地量或缩量再放量、底背离可替代 RSI 拐头。
+    大盘偏弱只压趋势左侧；游资左侧仍可做超跌反抽。"""
     kind = stock_kind(s, q, hist)
     px = q["px"]
     ma20 = f["ma20"] if f else None
@@ -4250,6 +4290,7 @@ def left_setup(s, q, f, yld, hist, flow, idx_weak=False):
     rsi_ok = rsi_turn_up(hist, q, f)
     vol_ok = vol_dry_then_expand(hist, q)
     dbl_ok = double_bottom(hist, q, green)
+    div_ok = rsi_bull_div(hist, q, f)
     confirm = []
     if slope is None:
         confirm.append("斜率缺")
@@ -4265,6 +4306,8 @@ def left_setup(s, q, f, yld, hist, flow, idx_weak=False):
         confirm.append("缩量后再放量")
     if dbl_ok:
         confirm.append("二探不破")
+    if div_ok:
+        confirm.append("底背离")
     confirm_txt = "；".join(confirm) if confirm else "-"
 
     atr = atr14(hist)
@@ -4289,15 +4332,19 @@ def left_setup(s, q, f, yld, hist, flow, idx_weak=False):
         else:
             call, how = "观察", "趋势超跌，等站回均价再试"
 
-    # 止跌确认对两条战法同一个标准。原来游资左侧只要翻红就能试仓，
-    # 趋势左侧却要 RSI 拐头/缩量再放量/二探，同一个「左侧超跌」两套安全线。
     if call == "可试仓":
         if ma20_diving:
             call, how = "观察", "均线还在加速下跌，超跌钝化，只盯不抄"
-        elif idx_weak:
-            call, how = "观察", "大盘偏弱，左侧只盯不抄"
-        elif not (rsi_ok or vol_ok or dbl_ok):
-            call, how = "观察", "缺RSI拐头/缩量再放量/二探，未确认止跌"
+        elif idx_weak and kind != "游资":
+            call, how = "观察", "大盘偏弱，趋势左侧只盯不抄"
+        elif not (rsi_ok or vol_ok or dbl_ok or div_ok):
+            call, how = "观察", "缺RSI拐头/缩量再放量/二探/底背离，未确认止跌"
+        else:
+            fr = fib_ratio(hist, q)
+            if fr is not None and fr < 0.382:
+                call, how = "观察", "回撤未到38.2，不当底"
+            elif vol_elevated(hist) and not vol_ok:
+                call, how = "观察", "未地量，下跌中继只盯不抄"
 
     return {
         "score": score, "kind": kind, "call": call, "how": how,
@@ -4805,6 +4852,11 @@ def portfolio_plan(cands, exits_by_code, cfg):
             skipped.append({**c, "reason": f"净盈亏比仅{net_rr:.1f}（<1.2），位置不好不给仓位"})
             continue
         want = risk_amt / stop_dist * px if stop_dist > 0 else 0
+        if c.get("kind") == "左侧":
+            want *= 0.5
+            loc = c.get("left_loc")
+            if loc is not None and loc < 55:
+                want *= 0.55
         room_name = max_name
         room_line = max_line - used_line.get(line, 0)
         room_total = max_total - used_total
@@ -4868,7 +4920,8 @@ def portfolio_plan(cands, exits_by_code, cfg):
 
 
 def name_call(s, q, f, yld):
-    """趋势闸。保留：今涨停不追、昨跌停骗炮、MA20、RSI≥70。改：量能否决、今涨跟ATR/板、均价允许站回。"""
+    """趋势闸。保留：今涨停不追、昨跌停骗炮、MA20、RSI≥70。
+    可小仓加回踩质量：不破昨低、不无量冲、均线不能空头加速、回踩要缩量接。"""
     dt = yday_dt_shape(q, yld)
     extra = ""
     if dt == "trap":
@@ -4915,6 +4968,19 @@ def name_call(s, q, f, yld):
             return "观察", "价涨资金出，不能小仓" + extra
         if vr < 1.0:
             return "观察", "无量站上均价，胜率差" + extra
+        yhl = (f or {}).get("yhl") or ""
+        pb = (f or {}).get("pullback") or ""
+        slope = (f or {}).get("slope")
+        if yhl == "破昨低":
+            return "观察", "破昨低，趋势回踩失败不是承接" + extra
+        if "无量冲" in pb:
+            return "观察", "无量冲均线，不是缩量回踩" + extra
+        if slope is not None and slope <= -0.8:
+            return "观察", "均线空头加速，趋势不做回踩，留给左侧" + extra
+        if "回踩" in pb and "承接" not in pb and vr >= 1.5 and red:
+            return "观察", "回踩放量，不像缩量接" + extra
+        if "回踩" in pb and "承接" in pb:
+            why_ok = "缩量回踩承接、" + why_ok
         return "可小仓", why_ok
     if above_ma20:
         if hot_rsi or q["chg"] >= cap:
@@ -6021,6 +6087,21 @@ def _gate_check_rows(s, q, fac, yz, st, line, kind, call, why, auc, db, mood, la
             row("挡", "量比", f"归一量比{vr_n:.2f}，趋势要≥1.0才算有量站上均价。", "量比≥1.0")
         else:
             row("过", "量比", f"归一量比{vr_n:.2f}（原始{ _n(q.get('vol_ratio'), 2) }），过1.0。")
+        yhl = fac.get("yhl") or ""
+        pb = fac.get("pullback") or ""
+        slope = fac.get("slope")
+        if yhl == "破昨低":
+            row("挡", "趋势回踩", "破昨低，回踩失败不是承接。", "守住昨低再回均价")
+        elif "无量冲" in pb:
+            row("挡", "趋势回踩", "无量冲均线，不是缩量回踩。", "缩量回踩到均线再接")
+        elif slope is not None and slope <= -0.8:
+            row("挡", "趋势回踩", f"均线空头加速（{slope:.1f}%），趋势仓不做，留给左侧。", "均线走平再谈趋势回踩")
+        elif "回踩" in pb and "承接" not in pb and vr_n >= 1.5 and ((chg or 0) < 0 or (px and o and px < o)):
+            row("挡", "趋势回踩", "回踩放量，不像缩量接。", "缩量回到均线再接")
+        elif "承接" in pb:
+            row("过", "趋势回踩", f"{pb}，缩量回踩质量过关。")
+        else:
+            row("过", "趋势回踩", f"昨高低「{yhl}」，{pb or '无回踩标注'}。")
 
     if kind == "游资":
         need = youzi_enter_need(yz, mood)
@@ -7294,8 +7375,7 @@ def main():
     elif etf_ok:
         r = max(etf_ok, key=lambda x: x[3])
         pick_name, pick_why = r[0], f"ETF分 {r[3]:.0f}"
-    elif left_ok:
-        pick_name, pick_why = left_ok[0].split()[0], "左侧轻仓，不替代右侧"
+    # 左侧不进最适合买：空仓日就空仓，不用超跌反抽填空白。
     buy_bits = []
     buy_bits.extend(x[0] for x in trend_ok)
     buy_bits.extend(x[0] for x in daban_ok)
@@ -7397,9 +7477,11 @@ def main():
             continue
         if w:
             w["call"] = "可试仓"
+            w["kind"] = "左侧"
             w["role"] = "轻仓备选(左侧)"
             w["why"] = ls.get("how") or w["why"]
             w["tape_txt"] = f"左侧{ls.get('score') or 0:.0f}"
+            w["left_loc"] = ls.get("loc")
         else:
             st2, line2 = line_status_of(s)
             record_worth(
@@ -7407,6 +7489,8 @@ def main():
                 line2, st2, ls.get("score") or 0, f"左侧{ls.get('score') or 0:.0f}",
                 ((f or {}).get("auction") or {}).get("call"), (f or {}).get("buy") or 0,
             )
+            if s["code"] in worth_by_code:
+                worth_by_code[s["code"]]["left_loc"] = ls.get("loc")
     worth_all = list(worth_by_code.values())
     worth_all.sort(key=lambda x: (-x["score"], x["name"]))
     for i, r in enumerate(worth_all, 1):
@@ -7436,6 +7520,7 @@ def main():
             pf_cands.append({
                 "code": x["code"], "name": x["name"], "kind": x["kind"],
                 "line": x["line"], "px": x["px"], "score": x["score"], "call": x["call"],
+                "left_loc": x.get("left_loc"),
             })
     pf = portfolio_plan(pf_cands, {k: v for k, v in exits_all.items() if len(str(k)) == 6}, risk_cfg)
 
@@ -8054,7 +8139,7 @@ def main():
         lines.append(f"- 新易盛：7a {yz['score']:.0f}，买点 **{display_call(call)}**（{why}）。{hint}。")
     lines.append("")
     lines.append("## 8 左侧超跌")
-    lines.append("进池/左侧分仍是原公式：乖离/RSI/距前高超跌 + 收阳或长下影止跌 + 放量承接。斐波那契只标注。趋势可试仓额外要求：均线走平、且 RSI拐头或缩量再放量或二探不破；大盘偏弱则趋势票只观察。游资左侧不要求均线走平。失败：破今日低或 ATR。类型列区分趋势/游资。")
+    lines.append("进池/左侧分仍是原公式：乖离/RSI/距前高超跌 + 收阳或长下影止跌。可试仓要回撤到38.2、地量或缩量再放量，止跌确认=RSI拐头/缩量再放量/二探/底背离。斐波那契参与过滤不再只标注。大盘冲高回落只压趋势左侧；指数破MA20本身不关。游资左侧不因大盘、也不因主线回避关掉。失败：破今日低。不进今日必买、不进最适合买。")
     left_merged = left_ranked
     lines.append(f"### 分池（趋势{len(left_trend)}+游资{len(left_youzi)}，共{len(left_merged)}只）")
     lines.append("| 序 | 股票 | 类型 | 位置 | 斐波那契 | 止跌确认 | 左侧确认 | 主线 | 左侧分 | 判断 | 怎么做 |")
@@ -8197,7 +8282,7 @@ def main():
     if not n_buy_rows:
         lines.append("| - | 没有同时满足分层条件的票 | - | - | - | - | 表一可小仓+主线未回避；或打板分≥75一进二/弱转强；或7a≥65；或表三可试仓 | - | **不买** | - | - |")
     lines.append("")
-    lines.append("总判规则：趋势=表一可小仓且主线不是回避；早盘接力仓=今首板不追，昨首板一进二/弱转强/龙回头才可能可小仓；游资=7a过门槛（资金缺72/退潮75，平时65）、未涨停见顶、主线不是回避；ETF同主线回避也降观察；左侧=轻仓试。最适合买：趋势 > 早盘接力仓 > 游资 > ETF > 左侧。今涨停不追。昨跌停骗炮才不买，弱转强放宽为低开翻红站住均价。尾盘隔夜仓见第1节，不进本表。")
+    lines.append("总判规则：趋势=表一可小仓且主线不是回避，回踩要缩量、不破昨低、均线不能空头加速；早盘接力仓=今首板不追，昨首板一进二/弱转强/龙回头才可能可小仓；游资=7a过门槛（资金缺72/退潮75，平时65）、未涨停见顶、主线不是回避；ETF同主线回避也降观察；左侧=轻仓试，不进今日必买也不进最适合买。最适合买：趋势 > 早盘接力仓 > 游资 > ETF，空仓不拿左侧填。今涨停不追。昨跌停骗炮才不买，弱转强放宽为低开翻红站住均价。尾盘隔夜仓见第1节，不进本表。")
     if trend_let:
         lines.append("- 同主线趋势让出：" + "、".join(x[0] for x in trend_let))
     if youzi_let:
@@ -9026,6 +9111,50 @@ if __name__ == "__main__":
             s, q, {}, None, "可做", "消费电子", {"phase": "修复"}, t(14, 45), {}, {}, cold,
         )
         assert meal_gene["call"] == "不买" and meal_gene["setup"] == "无涨停基因", meal_gene
+        ts = {"code": "600000", "name": "浦发银行", "board": "银行"}
+        tq = {
+            "px": 10.2, "chg": 0.8, "open": 10.1, "prev": 10.12, "vwap": 10.15,
+            "low": 10.05, "high": 10.25, "vol_ratio": 1.3, "name": "浦发银行",
+        }
+        tf = {
+            "ma20": 10.0, "rsi": 55, "vwap_reclaim": False, "vwap_held": True,
+            "yhl": "昨高低内", "pullback": "回踩MA20承接", "slope": 0.5,
+            "vp": "量价正常", "atr_pct": 2.0,
+        }
+        assert name_call(ts, tq, tf, False)[0] == "可小仓", name_call(ts, tq, tf, False)
+        tf2 = dict(tf)
+        tf2["yhl"] = "破昨低"
+        assert name_call(ts, tq, tf2, False)[0] == "观察"
+        tf3 = dict(tf)
+        tf3["pullback"] = "无回踩"
+        tf3["slope"] = -0.9
+        assert name_call(ts, tq, tf3, False) == ("观察", "均线空头加速，趋势不做回踩，留给左侧")
+        tf4 = dict(tf)
+        tf4["pullback"] = "无量冲"
+        assert "无量冲" in name_call(ts, tq, tf4, False)[1]
+        hi, lo, px = 12.0, 8.0, 10.0
+        hist_fib = [["d", 11, hi, 10, 11, 1], ["d", 10, 11, lo, 9, 1]]
+        assert abs(fib_ratio(hist_fib, {"px": px, "high": 10.1, "low": 9.9}) - (hi - px) / (hi - lo)) < 1e-6
+        assert fib_ratio(hist_fib, {"px": 11.7, "high": 11.8, "low": 11.6}) < 0.382
+        w, rs = index_left_weak(
+            {"000001": {"px": 3000, "open": 3000, "prev": 3010, "high": 3010, "low": 2990, "chg": -0.3}},
+            {},
+        )
+        assert w is False, (w, rs)
+        w2, rs2 = index_left_weak(
+            {"000001": {"px": 3000, "open": 3020, "prev": 3000, "high": 3030, "low": 2995, "chg": 0.0}},
+            {},
+        )
+        assert w2 is True and any("高开低走" in x for x in rs2), (w2, rs2)
+        pf_left = portfolio_plan(
+            [{"code": "000001", "name": "测", "kind": "左侧", "line": "银行",
+              "px": 10.0, "score": 40, "call": "可试仓", "left_loc": 40}],
+            {"000001": {"sl": 9.5, "tp1": 11.0}},
+            dict(RISK_DEFAULT),
+        )
+        assert pf_left["plan"] and pf_left["plan"][0]["amt"] < 8000, pf_left
+        assert "空仓不拿左侧填" in gen
+        assert "pick_name, pick_why = left_ok[0]" not in gen
         print("SELFTEST_OK", meal["score"], meal3["setup"], meal3["score"], c["slot"])
         sys.exit(0)
     if len(sys.argv) >= 2 and sys.argv[1] in ("--html", "--pdf"):

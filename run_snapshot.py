@@ -4599,6 +4599,18 @@ def _day_done(now, date_s):
     return cn_session_closed(now)
 
 
+def _fwd_day_bar(nxts, idx, now):
+    """入选日后第 idx+1 个交易日。开盘有K就填，收盘要那天已经 15:00。未来日不填。"""
+    if idx >= len(nxts or []):
+        return None, None, False
+    b = nxts[idx]
+    today = now.strftime("%Y-%m-%d")
+    if b[0] > today:
+        return None, None, False
+    done = _day_done(now, b[0])
+    return b[1], (b[4] if done else None), done
+
+
 def _fwd_from(hist, date_s, px, now=None):
     """信号当时的价 → 之后第1/3/5个交易日收盘。用已经抓下来的日线，不额外请求。"""
     if not hist or not px:
@@ -4633,6 +4645,7 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
     可小仓：盘中 09:30-14:50 入选 → 成交价=入选价；收盘后/盘前 → 次日开。
     可尾盘：14:30 后记的就是当日尾盘价，不再改成次日开。
     A股T+1，胜负看次日收相对成交价扣成本。隔夜=次日开相对入选价。
+    后2日/后3日再记开盘、收盘；胜率仍是那天收盘÷成交价扣成本，只作持有对照，不改次日胜负。
     止盈止损用入选当时记下的价；当日若还没入档，用这一轮纪律价补上。
     入选次数=这只票在表里出现的天数（每天第一次算一次）。"""
     first = {}
@@ -4659,6 +4672,7 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
     n_open = n_open_win = 0
     n_fill = n_fill_win = 0
     s_open = s_fill = 0.0
+    fwd_stats = {2: {"n": 0, "win": 0, "s": 0.0}, 3: {"n": 0, "win": 0, "s": 0.0}}
     for r in sorted(first.values(), key=lambda x: (x.get("date") or "", x.get("time") or ""), reverse=True):
         try:
             px = float(r["px"]) if r.get("px") else None
@@ -4713,6 +4727,26 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
             exr = _sltp_from_report(r.get("date"), r.get("time"), r.get("name"))
             if exr:
                 sl, tp1, tp2 = exr[0], tp1 if tp1 is not None else exr[1], tp2 if tp2 is not None else exr[2]
+        extra = {}
+        for day_n, idx in ((2, 1), (3, 2)):
+            op, cl, done = _fwd_day_bar(nxts, idx, now)
+            tag = f"d{day_n}"
+            res_i = f"待后{day_n}日"
+            net_i = None
+            if op is not None and not done:
+                res_i = f"待后{day_n}日收"
+            if cl is not None and entry:
+                fill_i = _pct(cl, entry)
+                net_i = (fill_i - cost_pct) if fill_i is not None else None
+                if net_i is not None:
+                    res_i = "胜" if net_i > 0 else "负"
+                    fwd_stats[day_n]["n"] += 1
+                    fwd_stats[day_n]["win"] += 1 if net_i > 0 else 0
+                    fwd_stats[day_n]["s"] += net_i
+            extra[f"{tag}_open"] = op
+            extra[f"{tag}_close"] = cl
+            extra[f"{tag}_net"] = net_i
+            extra[f"{tag}_result"] = res_i
         rows.append({
             "date": r.get("date"), "time": r.get("time"),
             "code": r.get("code"), "name": r.get("name"),
@@ -4723,7 +4757,14 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
             "nth": nth_of.get((r.get("date"), r.get("code"))) or 1,
             "nxt_open": nxt_open, "open_pct": overnight,
             "nxt_close": nxt_close, "net_close": net, "result": result,
+            **extra,
         })
+    def _fwd_pack(day_n):
+        b = fwd_stats[day_n]
+        n = b["n"]
+        return n, ((b["win"] / n * 100) if n else None), ((b["s"] / n) if n else None)
+    n_d2, win_d2, avg_d2 = _fwd_pack(2)
+    n_d3, win_d3, avg_d3 = _fwd_pack(3)
     return {
         "rows": rows[:40],
         "n": len(rows),
@@ -4731,6 +4772,8 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
         "avg_open": (s_open / n_open) if n_open else None,
         "n_close": n_fill, "win_close": (n_fill_win / n_fill * 100) if n_fill else None,
         "avg_close": (s_fill / n_fill) if n_fill else None,
+        "n_d2": n_d2, "win_d2": win_d2, "avg_d2": avg_d2,
+        "n_d3": n_d3, "win_d3": win_d3, "avg_d3": avg_d3,
         "cost_pct": cost_pct,
     }
 
@@ -7785,20 +7828,30 @@ def main():
         if tp2 is None:
             return sl_s, _p(tp1)
         return sl_s, f"{_p(tp1)}/{_p(tp2)}"
+    def _fwd_win(row, tag):
+        res = row.get(f"{tag}_result") or "-"
+        net = row.get(f"{tag}_net")
+        if net is None:
+            return res
+        return f"**{res}** {_pp(net)}"
     def _track_block(title, note, empty, blob):
         lines.append(f"#### {title}")
         lines.append(note)
         if blob.get("n"):
             win_open = f"{blob['win_open']:.0f}%" if blob.get("win_open") is not None else "待次日"
             win_close = f"{blob['win_close']:.0f}%" if blob.get("win_close") is not None else "待次日收"
+            win_d2 = f"{blob['win_d2']:.0f}%" if blob.get("win_d2") is not None else "待后2日收"
+            win_d3 = f"{blob['win_d3']:.0f}%" if blob.get("win_d3") is not None else "待后3日收"
             lines.append(
                 f"近{rv.get('days', 30)}日入选 {blob.get('n') or 0} 笔；"
                 f"隔夜有数 {blob.get('n_open') or 0} 笔，隔夜胜率 {win_open}，隔夜均涨 {_pp(blob.get('avg_open'))}；"
-                f"可成交有数 {blob.get('n_close') or 0} 笔，收盘胜率 {win_close}，均盈 {_pp(blob.get('avg_close'))}。"
+                f"可成交有数 {blob.get('n_close') or 0} 笔，收盘胜率 {win_close}，均盈 {_pp(blob.get('avg_close'))}；"
+                f"后2日有数 {blob.get('n_d2') or 0} 笔，后2日胜率 {win_d2}，均盈 {_pp(blob.get('avg_d2'))}；"
+                f"后3日有数 {blob.get('n_d3') or 0} 笔，后3日胜率 {win_d3}，均盈 {_pp(blob.get('avg_d3'))}。"
                 "样本少于20笔先别下结论。"
             )
-            lines.append("| 入选日 | 名称 | 入选次数 | 入选价 | 成交价 | 口径 | 止损 | 止盈 | 次日开 | 隔夜 | 次日收 | 扣成本 | 结果 |")
-            lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+            lines.append("| 入选日 | 名称 | 入选次数 | 入选价 | 成交价 | 口径 | 止损 | 止盈 | 次日开 | 隔夜 | 次日收 | 扣成本 | 结果 | 后2日开 | 后2日收 | 后2日胜 | 后3日开 | 后3日收 | 后3日胜 |")
+            lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
             for r in blob.get("rows") or []:
                 sl_s, tp_s = _sltp(r)
                 nth = r.get("nth") or 1
@@ -7811,7 +7864,9 @@ def main():
                     f"| {_p(r.get('px'))} | {_p(r.get('entry'))} | {r.get('how') or '-'} "
                     f"| {sl_s} | {tp_s} "
                     f"| {_p(r.get('nxt_open'))} | {_pp(r.get('open_pct'))} "
-                    f"| {_p(r.get('nxt_close'))} | {_pp(r.get('net_close'))} | **{r.get('result') or '-'}** |"
+                    f"| {_p(r.get('nxt_close'))} | {_pp(r.get('net_close'))} | **{r.get('result') or '-'}** "
+                    f"| {_p(r.get('d2_open'))} | {_p(r.get('d2_close'))} | {_fwd_win(r, 'd2')} "
+                    f"| {_p(r.get('d3_open'))} | {_p(r.get('d3_close'))} | {_fwd_win(r, 'd3')} |"
                 )
         else:
             lines.append(empty)
@@ -7850,6 +7905,7 @@ def main():
     lines.append(
         "这一节只复盘，不改今天的闸。里面两块：**胜率-今日必买**（第0节）和 **胜率-尾盘狙击**（第1节尾盘狙击），不要混成一张总表。"
         "胜负怎么算：当时价买进 → 次日收盘卖掉（A股T+1），扣成本后赚钱=胜、亏钱=负。隔夜涨跌只是参考，不是胜负。"
+        "表里再加后2日/后3日的开盘价、收盘价和胜率，口径同样是那天收盘÷成交价扣成本，只作持有对照，不改次日胜负。"
         "「不买/不追的胜率」不是你没买也算赢，是**假如当时违闸买了**，次日收盘赚不赚钱。涨停惯性会让这格看起来很赚，所以不能拿来推翻今涨停不追。"
         "可小仓该打赢观察；打不赢去改阈值，不要去买观察。"
     )
@@ -7862,6 +7918,8 @@ def main():
         "盘中09:30–14:50入选，成交价=入选价；收盘后/盘前入选，成交价=次日开。"
         f"A股T+1，**胜负=次日收÷成交价，已扣成本{cost_txt}%**。"
         "隔夜=次日开相对入选价，只作隔夜参考。"
+        "后2日/后3日=入选后再过第2、第3个交易日，跟入选次数的「第2日/共3日」不是一回事。"
+        "开盘有K就填，收盘要那天 15:00。后2日/后3日胜率=那天收盘÷成交价扣成本，只作持有对照，不改次日胜负。"
         "止损/止盈是入选当时的纪律价（第0节那套），不是事后改的；当时报告里有的会补上，没有才标-。"
         "入选次数=近窗该票进过今日必买的**交易日数**，不是刷新次数；第2日/共3日=这是第2个交易日、一共3天进过今日必买。"
         "入选日后面的钟是第一次记下的时刻。次日收要等那天 15:00 收盘后那一轮快照才填，盘中和 15:00 前都是待收盘。",
@@ -7917,13 +7975,14 @@ def main():
     lines.append("### 胜率-尾盘狙击")
     lines.append(
         "第1节「尾盘狙击」独立仓的成绩，不进今日必买，也不跟第0节闸混在一张表里。"
-        "第一次可尾盘记一笔；隔夜看次日开，收盘胜率看到次日收只作对照。"
+        "第一次可尾盘记一笔；隔夜看次日开，收盘胜率看到次日收只作对照；后2日/后3日开收和胜率也只作持有对照。"
     )
     _track_block(
         "当时尾盘买了的票（可尾盘）",
         "口径：每个交易日每只票只记**第一次可尾盘**。同一天刷新不加次数。14:30后入选价=当时尾盘价，不改成次日开。"
         "隔夜胜率=次日开÷入选价，这是早盘兑现的参考。"
         "收盘胜率是拿到次日收，比策略10:00清完更晚，只作对照。"
+        "后2日/后3日再记开盘、收盘和胜率，口径一样：那天收盘÷成交价扣成本，不是策略持仓到那天。"
         "不进今日必买。入选次数=近窗该票可尾盘**交易日数**，第2日/共3日=第2个交易日、一共3天。",
         "- 还没有可尾盘留档。第1节筛出可尾盘后，这里会列出入选日和尾盘价。"
         + (f"（本次新增 {n_jm} 条）" if n_jm else ""),
@@ -8428,6 +8487,12 @@ def main():
             "n_close": (bt or {}).get("n_close") or 0,
             "win_close": (bt or {}).get("win_close"),
             "avg_close": (bt or {}).get("avg_close"),
+            "n_d2": (bt or {}).get("n_d2") or 0,
+            "win_d2": (bt or {}).get("win_d2"),
+            "avg_d2": (bt or {}).get("avg_d2"),
+            "n_d3": (bt or {}).get("n_d3") or 0,
+            "win_d3": (bt or {}).get("win_d3"),
+            "avg_d3": (bt or {}).get("avg_d3"),
         },
         "meal_track": {
             "n": (mt or {}).get("n") or 0,
@@ -8437,6 +8502,12 @@ def main():
             "n_close": (mt or {}).get("n_close") or 0,
             "win_close": (mt or {}).get("win_close"),
             "avg_close": (mt or {}).get("avg_close"),
+            "n_d2": (mt or {}).get("n_d2") or 0,
+            "win_d2": (mt or {}).get("win_d2"),
+            "avg_d2": (mt or {}).get("avg_d2"),
+            "n_d3": (mt or {}).get("n_d3") or 0,
+            "win_d3": (mt or {}).get("win_d3"),
+            "avg_d3": (mt or {}).get("avg_d3"),
         },
         "portfolio": {
             "cfg": pf.get("cfg"),
@@ -8878,6 +8949,8 @@ if __name__ == "__main__":
         assert gen.find("### 胜率-尾盘狙击") > gen.find("### 胜率-今日必买")
         assert "入选次数" in gen
         assert "第{nth}日/共{n_pick}日" in gen
+        assert "后2日开" in gen and "后3日胜" in gen
+        assert "后2日胜率" in gen and "后3日胜率" in gen
         assert "同一天刷新" in gen
         assert gen.find("## 3 板块资金") > gen.find("### 胜率-尾盘狙击")
         assert gen.find("## 5 个股一览") > gen.find("## 4 集合竞价")
@@ -8940,7 +9013,41 @@ if __name__ == "__main__":
         ]}
         mt = _buy_track(meal_recs, meal_hist, t(10, 0), 0.1, call="可尾盘")
         assert mt["n"] == 1 and mt["rows"][0]["how"] == "盘中价", mt
+        assert mt["rows"][0]["d2_open"] is None and mt["rows"][0]["d2_result"] == "待后2日", mt["rows"][0]
         assert _buy_track(meal_recs, meal_hist, t(10, 0), 0.1)["n"] == 0
+        fwd_hist = {"000001": [
+            ["2026-09-18", 10.0, 10.2, 9.8, 10.1, 1],
+            ["2026-09-21", 10.4, 10.8, 10.2, 10.6, 1],
+            ["2026-09-22", 10.7, 10.9, 10.5, 10.5, 1],
+            ["2026-09-23", 10.8, 11.2, 10.6, 11.0, 1],
+        ]}
+        fwd_recs = [{
+            "date": "2026-09-18", "time": "10:00", "code": "000001", "name": "平安银行",
+            "call": "可小仓", "px": 10.0,
+        }]
+        mid = _buy_track(fwd_recs, fwd_hist, datetime.datetime(2026, 9, 22, 10, 0, tzinfo=tz), 0.1)
+        row = mid["rows"][0]
+        assert row["d2_open"] == 10.7 and row["d2_close"] is None and row["d2_result"] == "待后2日收", row
+        assert row["d3_open"] is None and row["d3_close"] is None and row["d3_result"] == "待后3日", row
+        assert mid["n_d2"] == 0 and mid["n_d3"] == 0, mid
+        done = _buy_track(fwd_recs, fwd_hist, datetime.datetime(2026, 9, 23, 16, 0, tzinfo=tz), 0.1)
+        drow = done["rows"][0]
+        assert drow["d2_open"] == 10.7 and drow["d2_close"] == 10.5 and drow["d2_result"] == "胜", drow
+        assert abs(drow["d2_net"] - 4.9) < 1e-9, drow
+        assert drow["d3_open"] == 10.8 and drow["d3_close"] == 11.0 and drow["d3_result"] == "胜", drow
+        assert abs(drow["d3_net"] - 9.9) < 1e-9, drow
+        assert done["n_d2"] == 1 and done["win_d2"] == 100, done
+        assert done["n_d3"] == 1 and done["win_d3"] == 100, done
+        lose_hist = {"000001": [
+            ["2026-09-18", 10.0, 10.2, 9.8, 10.1, 1],
+            ["2026-09-21", 9.8, 10.0, 9.5, 9.6, 1],
+            ["2026-09-22", 9.5, 9.7, 9.2, 9.3, 1],
+            ["2026-09-23", 9.2, 9.4, 9.0, 9.1, 1],
+        ]}
+        lose = _buy_track(fwd_recs, lose_hist, datetime.datetime(2026, 9, 23, 16, 0, tzinfo=tz), 0.1)
+        lrow = lose["rows"][0]
+        assert lrow["d2_result"] == "负" and lrow["d3_result"] == "负", lrow
+        assert lose["win_d2"] == 0 and lose["win_d3"] == 0, lose
         s = {"code": "002475", "name": "立讯精密", "asset": "stock"}
         q = {
             "px": 42.0, "high": 42.3, "vwap": 41.2, "chg": 4.2, "turnover": 7.2,

@@ -7401,6 +7401,7 @@ def main():
         lines.append("**最适合买：没有。不开新仓**")
     lines.append(f"**今日最值得买 TOP5：{top5_line}**")
     lines.append(f"**备选池（观察不进最值得买）：{alt_line}**")
+    lines.append("仓怎么分：**游资≠打板。** 游资是7a短线仓（09:35–10:15）。打板有两套：早盘接力仓（昨板今接力，今首板不追）在第0节；尾盘狙击是隔夜打板，只看第1节，不进今日必买。")
     lines.append("| 仓 | 股票 | 价 | 今涨 | 买点 | 主线 | 为什么 | 止损 | 止盈 |")
     lines.append("|---|---|---|---|---|---|---|---|---|")
     n0 = 0
@@ -8361,8 +8362,19 @@ h1 .clock { display:block; margin-top:10px; font-family:var(--mono); font-size:1
 h2 { font-size:13px; letter-spacing:.08em; margin:36px 0 14px; padding-top:18px;
   border-top:1px solid rgba(242,241,236,.12); color:#9a9890; scroll-margin-top:62px; font-weight:600; }
 h2#snews { border:0; margin:2px 0 14px; color:#c5c2b6; font-size:13px; padding-top:0; }
-h2#s0 { margin:36px 0 10px; color:#c5c2b6; font-size:13px; }
+h2#s0 { margin:36px 0 10px; color:#f2f1ec; font-size:13px; }
 h2#swin { color:#c5c2b6; font-size:13px; }
+.sec0 h2#s0 { font-size:clamp(26px,4.8vw,36px); font-weight:800; color:#fff; letter-spacing:0;
+  border-top:0; padding-top:8px; margin-top:28px; }
+.sec0 .hero { padding:22px 24px; margin:0 0 18px; border-color:rgba(242,241,236,.22); }
+.sec0 .hero p { font-size:clamp(18px,3.2vw,24px); font-weight:800; line-height:1.45; color:#fff; }
+.sec0 .hero p:first-child { font-size:clamp(20px,3.8vw,28px); }
+.sec0 table { font-size:16px; }
+.sec0 th { font-size:13px; }
+.sec0 td, .sec0 th { padding:14px 16px; }
+.sec0 td:first-child { font-weight:800; color:#fff; }
+.sec0 h3 { font-size:clamp(20px,3vw,24px); font-weight:800; }
+.sec0 p, .sec0 li { font-size:16px; color:#e8e6de; }
 .hero { color:#f2f1ec; background:#1c1c1a; border:1px solid rgba(242,241,236,.12);
   border-radius:14px; padding:20px 22px; margin:0 0 22px; }
 .hero p { margin:0 0 10px; font-size:16px; font-weight:600; color:#f2f1ec; overflow-wrap:anywhere;
@@ -8406,6 +8418,9 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
   td.wrapcell, th.wrapcell { max-width:46vw; min-width:96px; }
   h2 { scroll-margin-top:48px; }
   .hero p { font-size:15px; }
+  .sec0 .hero p { font-size:18px; }
+  .sec0 .hero p:first-child { font-size:20px; }
+  .sec0 table { font-size:14px; }
   .hint { display:none; }
   .page { padding-bottom:24px; }
 }
@@ -8426,7 +8441,7 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         f"<title>{html.escape(title)}</title>",
         '<link rel="preconnect" href="https://fonts.googleapis.com">',
         '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
-        '<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">',
+        '<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700;800&display=swap" rel="stylesheet">',
         f"<style>{css}</style></head><body>",
         "<nav class=toc>",
         "<a href='#snews'>最新资讯</a>",
@@ -8452,6 +8467,7 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
     i = 0
     hero_open = False
     pending_hero = False
+    sec0_open = False
     while i < len(lines):
         raw = lines[i]
         line = raw.rstrip()
@@ -8476,6 +8492,9 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
             i += 1
             continue
         if line.startswith("## "):
+            if sec0_open:
+                parts.append("</section>")
+                sec0_open = False
             title_txt = line[3:].strip()
             m = re.match(r"^(\d+[a-z]?)", title_txt)
             if m:
@@ -8484,6 +8503,9 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
                 hid = "snews"
             else:
                 hid = ""
+            if hid == "s0":
+                parts.append("<section class=sec0>")
+                sec0_open = True
             parts.append(f"<h2 id='{hid}'>{inline_md(title_txt)}</h2>")
             pending_hero = hid == "s0"
             i += 1
@@ -8545,6 +8567,8 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
         i += 1
     if hero_open:
         parts.append("</div>")
+    if sec0_open:
+        parts.append("</section>")
     parts.append("</div>")
     parts.append("<div class=hint>左右滑动看全列 · 游资破均价 / 趋势看关键低</div>")
     parts.append("<script>document.documentElement.style.setProperty('--t', Date.now());</script>")
@@ -8677,6 +8701,19 @@ if __name__ == "__main__":
         assert "### 0e 最新资讯" not in gen
         assert gen.find("lines.extend(overnight_news_lines") < gen.find('lines.append("## 0 今日必买")')
         assert "## 0 能不能买" not in gen
+        assert "仓怎么分：" in gen and "游资≠打板" in gen
+        assert "section class=sec0" in gen
+        assert ".sec0 h2#s0" in gen
+        html0 = render_report_html(
+            "# 今日自选 2026-09-22 12:00 北京\n\n"
+            "## 0 今日必买\n**今日必买：无**\n"
+            "**仓怎么分：游资≠打板。** 游资是7a短线仓。\n"
+            "## 1 尾盘狙击\n正文\n"
+        )
+        assert "<section class=sec0>" in html0
+        assert html0.find("<section class=sec0>") < html0.find("id='s0'")
+        assert html0.find("</section>") < html0.find("id='s1'")
+        assert "游资≠打板" in html0
         assert _em_diff({"data": {"diff": [{"f12": "1"}]}})[0]["f12"] == "1"
         assert _em_diff({"data": {"diff": {"0": {"f12": "2"}}}})[0]["f12"] == "2"
         assert _em_diff({"data": {"diff": None}}) == []

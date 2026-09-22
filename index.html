@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <meta name="theme-color" content="#111110">
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg:#111110; --card:#1c1c1a; --ink:#f2f1ec; --muted:#9a9890; --line:rgba(242,241,236,.12);
@@ -74,6 +74,10 @@
     #cards .card .v { flex:1; font-size:13px; }
     .card .v { font-size:14px; font-weight:650; margin-top:6px; line-height:1.4;
       overflow-wrap:anywhere; color:#fff; }
+    #cards .card.buy { min-height:128px; padding:12px 14px; border-color:rgba(242,241,236,.22); }
+    #cards .card.buy .k { font-size:15px; font-weight:800; color:#fff; letter-spacing:0; }
+    #cards .card.buy .when { font-size:12px; color:#e8e6de; font-weight:500; }
+    #cards .card.buy .v { font-size:16px; font-weight:800; }
     .links { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; margin:6px 0 0; align-items:center; }
     .scan { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin:8px 0 10px; }
     .scan h3 { margin:0 0 10px; font-size:18px; line-height:1.4; }
@@ -138,6 +142,9 @@
       .clock { font-size:16px; }
       .card { min-height:auto; }
       #cards .card { min-height:128px; }
+      #cards .card.buy { min-height:148px; }
+      #cards .card.buy .k { font-size:16px; }
+      #cards .card.buy .v { font-size:18px; }
       .toolbar input { max-width:168px; font-size:14px; }
       .idx-chip { font-size:12px; }
     }
@@ -156,6 +163,7 @@
       .meta { font-size:12px; }
       .cards { display:flex; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; }
       #cards .card { flex:0 0 168px; width:168px; min-width:168px; min-height:124px; }
+      #cards .card.buy { flex:0 0 196px; width:196px; min-width:196px; min-height:148px; }
       .links { margin:4px 0 0; font-size:12px; }
       /* 苹果 Chrome 的 iframe 会盖住页面上的 fixed 底栏，搜索分析改放顶栏，报告改内嵌滚动 */
       .top .toggle { background:#f2f1ec; color:#111110; }
@@ -531,10 +539,12 @@
       }
       const trendNames = bookNames("trend");
       const youziNames = bookNames("youzi");
+      const dabanNames = bookNames("daban");
       const cards = [
-        ["今日必买-趋势", "最佳 10:00–10:30 · 13:00–13:30", trendNames || "暂无，不开新仓", trendNames ? cls("可") : cls("不"), ""],
-        ["今日必买-游资", "最佳 09:35–10:15", youziNames || "暂无，不开新仓", youziNames ? cls("可") : cls("不"), ""],
-        ["尾盘狙击", "独立仓 · 最佳 14:40–14:55 · 不进今日必买", mealTxt, mealCls, ""],
+        ["今日必买-趋势", "趋势仓 · 最佳 10:00–10:30 · 13:00–13:30", trendNames || "暂无，不开新仓", trendNames ? cls("可") : cls("不"), "buy"],
+        ["今日必买-游资", "7a短线仓，不是打板 · 最佳 09:35–10:15", youziNames || "暂无，不开新仓", youziNames ? cls("可") : cls("不"), "buy"],
+        ["今日必买-早盘接力仓", "昨板接力，今首板不追 · 最佳 09:32–10:00", dabanNames || "暂无，不开新仓", dabanNames ? cls("可") : cls("不"), "buy"],
+        ["尾盘狙击", "隔夜打板独立仓 · 14:40–14:55 · 不进今日必买", mealTxt, mealCls, "buy"],
         ["最值得买", "", top5, "", ""],
         ["可做主线", "", (d.doable || []).join("、") || "—", "ok", ""],
         ["回避主线", "", avoidBits, "bad", ""],

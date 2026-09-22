@@ -7402,13 +7402,13 @@ def main():
     lines.append("")
     lines.extend(overnight_news_lines(now, ovn_scan))
     lines.append("## 0 今日必买")
-    lines.append(f"**今日必买：{buy_line}**")
+    lines.append(f"今日必买：**{buy_line}**")
     if pick_name:
-        lines.append(f"**最适合买：{pick_name}（{pick_why}）**")
+        lines.append(f"最适合买：**{pick_name}**（{pick_why}）")
     else:
-        lines.append("**最适合买：没有。不开新仓**")
-    lines.append(f"**今日最值得买 TOP5：{top5_line}**")
-    lines.append(f"**备选池（观察不进最值得买）：{alt_line}**")
+        lines.append("最适合买：**没有。不开新仓**")
+    lines.append(f"今日最值得买 TOP5：**{top5_line}**")
+    lines.append(f"备选池（观察不进最值得买）：{alt_line}")
     lines.append("仓怎么分：**游资≠打板。** 游资是7a短线仓（09:35–10:15）。打板有两套：早盘接力仓（昨板今接力，今首板不追）在第0节；尾盘狙击是隔夜打板，只看第1节，不进今日必买。")
     lines.append("怎么看：**今日必买＝可小仓＝入选。** 看上面「今日必买」那行，或本表「买点」列。备选池是观察，不算入选。")
     lines.append("| 仓 | 股票 | 价 | 今涨 | 买点 | 主线 | 为什么 | 止损 | 止盈 |")
@@ -8070,14 +8070,14 @@ def main():
     lines.extend("- " + x for x in time_bits)
     lines.append("")
     lines.append("## 14 买点明细")
-    lines.append(f"**综合结论：{buy_today}**")
+    lines.append(f"综合结论：**{display_call(buy_today)}**")
     if pick_name:
-        lines.append(f"**最适合买：{pick_name}（{pick_why}）**")
+        lines.append(f"最适合买：**{pick_name}**（{pick_why}）")
     else:
-        lines.append("**最适合买：没有。不开新仓**")
-    lines.append(f"**今日必买：{buy_line}**")
-    lines.append(f"**今日最值得买 TOP5：{top5_line}（仅可小仓，表同第0节）**")
-    lines.append(f"**备选池：{alt_line}**")
+        lines.append("最适合买：**没有。不开新仓**")
+    lines.append(f"今日必买：**{buy_line}**")
+    lines.append(f"今日最值得买 TOP5：**{top5_line}**（仅过闸，表同第0节）")
+    lines.append(f"备选池：{alt_line}")
     lines.append("| 仓 | 股票 | 价 | 今涨 | 分 | 主线 | 依据 | 适合度 | 结论 | 止损 | 止盈 |")
     lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
     n_buy_rows = 0
@@ -8370,29 +8370,33 @@ h1 { font-family:var(--display); font-size:clamp(26px,5.2vw,40px); letter-spacin
   margin:4px 0 22px; font-weight:700; line-height:1.45; color:#f2f1ec; }
 h1 .clock { display:block; margin-top:10px; font-family:var(--mono); font-size:16px; font-weight:500;
   letter-spacing:.08em; color:#c5c2b6; line-height:1.5; font-variant-numeric:tabular-nums; }
-h2 { font-size:13px; letter-spacing:.08em; margin:36px 0 14px; padding-top:18px;
-  border-top:1px solid rgba(242,241,236,.12); color:#9a9890; scroll-margin-top:62px; font-weight:600; }
-h2#snews { border:0; margin:2px 0 14px; color:#c5c2b6; font-size:13px; padding-top:0; }
-h2#s0 { margin:36px 0 10px; color:#f2f1ec; font-size:13px; }
-h2#swin { color:#c5c2b6; font-size:13px; }
-.sec0 h2#s0 { font-size:clamp(26px,4.8vw,36px); font-weight:800; color:#fff; letter-spacing:0;
+h2 { font-size:15px; letter-spacing:.04em; margin:36px 0 14px; padding-top:18px;
+  border-top:1px solid rgba(242,241,236,.12); color:#c5c2b6; scroll-margin-top:62px; font-weight:650; }
+h2#snews { border:0; margin:2px 0 14px; color:#c5c2b6; font-size:15px; padding-top:0; }
+h2#s0 { margin:36px 0 10px; color:#f2f1ec; font-size:15px; }
+h2#swin { color:#c5c2b6; font-size:15px; }
+.sec0 h2#s0 { font-size:clamp(26px,4.8vw,36px); font-weight:700; color:#fff; letter-spacing:0;
   border-top:0; padding-top:8px; margin-top:28px; }
 .sec0 .hero { padding:22px 24px; margin:0 0 18px; border-color:rgba(242,241,236,.22); }
-.sec0 .hero p { font-size:clamp(18px,3.2vw,24px); font-weight:800; line-height:1.45; color:#fff; }
-.sec0 .hero p:first-child { font-size:clamp(20px,3.8vw,28px); }
+.sec0 .hero p { font-size:16px; font-weight:400; line-height:1.55; color:#d4d2ca; }
+.sec0 .hero p:first-child { font-size:clamp(20px,3.8vw,28px); color:#f2f1ec; }
+.sec0 .hero p:first-child b { font-weight:800; color:#fff; }
 .sec0 table { font-size:16px; }
-.sec0 th { font-size:13px; }
+.sec0 th { font-size:12px; font-weight:600; }
 .sec0 td, .sec0 th { padding:14px 16px; }
-.sec0 td:first-child { font-weight:800; color:#fff; }
-.sec0 h3 { font-size:clamp(20px,3vw,24px); font-weight:800; }
-.sec0 p, .sec0 li { font-size:16px; color:#e8e6de; }
+.sec0 h3 { font-size:clamp(18px,2.6vw,22px); font-weight:700; }
+.sec0 p, .sec0 li { font-size:15px; font-weight:400; color:#d4d2ca; }
+.sec0 p b, .sec0 li b { font-weight:700; color:#fff; }
 .hero { color:#f2f1ec; background:#1c1c1a; border:1px solid rgba(242,241,236,.12);
   border-radius:14px; padding:20px 22px; margin:0 0 22px; }
-.hero p { margin:0 0 10px; font-size:16px; font-weight:600; color:#f2f1ec; overflow-wrap:anywhere;
+.hero p { margin:0 0 10px; font-size:16px; font-weight:400; color:#d4d2ca; overflow-wrap:anywhere;
   letter-spacing:0; line-height:1.55; }
+.hero p:first-child { font-size:clamp(18px,3.2vw,24px); color:#f2f1ec; }
+.hero b { font-weight:700; color:#fff; }
 .hero p:last-child { margin-bottom:0; }
 h3 { font-size:20px; margin:24px 0 12px; color:#f2f1ec; font-weight:700; line-height:1.4; letter-spacing:0; }
-p, li { font-size:15px; overflow-wrap:anywhere; word-break:break-word; color:#d4d2ca; line-height:1.7; }
+p, li { font-size:15px; font-weight:400; overflow-wrap:anywhere; word-break:break-word; color:#d4d2ca; line-height:1.7; }
+p b, li b { font-weight:700; color:#fff; }
 ul { padding-left:1.15em; }
 .note { color:var(--muted); font-size:14px; margin:8px 0; }
 .swipe { margin:10px 0 22px; }
@@ -8406,11 +8410,12 @@ th { background:#262624; color:#c5c2b6; font-weight:600; font-size:12px; }
 tr:nth-child(even) td { background:rgba(255,255,255,.02); }
 tr:hover td { background:rgba(242,241,236,.06); }
 td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spacing:.02em; }
+td b { font-weight:700; }
 .up { color:#d67a7a; font-weight:600; }
 .dn { color:#6fba8d; font-weight:600; }
-.ok { color:#6fba8d; font-weight:650; }
-.bad { color:#d67a7a; font-weight:650; }
-.watch { color:#c4b48a; font-weight:600; }
+.ok { color:#6fba8d; font-weight:700; }
+.bad { color:#d67a7a; font-weight:700; }
+.watch { color:#c4b48a; font-weight:500; }
 .hint { position:fixed; left:0; right:0; bottom:0; z-index:20;
   background:rgba(17,17,16,.94); color:#9a9890; border-top:1px solid rgba(242,241,236,.12);
   padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px)); font-size:13px; }
@@ -8429,7 +8434,7 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
   td.wrapcell, th.wrapcell { max-width:46vw; min-width:96px; }
   h2 { scroll-margin-top:48px; }
   .hero p { font-size:15px; }
-  .sec0 .hero p { font-size:18px; }
+  .sec0 .hero p { font-size:15px; }
   .sec0 .hero p:first-child { font-size:20px; }
   .sec0 table { font-size:14px; }
   .hint { display:none; }
@@ -8479,15 +8484,19 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
     hero_open = False
     pending_hero = False
     sec0_open = False
+    def _hero_line(s):
+        t = s.lstrip("*").strip()
+        return t.startswith(("今日必买", "最适合买", "今日最值得买", "备选池"))
     while i < len(lines):
         raw = lines[i]
         line = raw.rstrip()
         if not line.strip():
             i += 1
             continue
-        if hero_open and not line.startswith("**"):
+        if hero_open and not _hero_line(line):
             parts.append("</div>")
             hero_open = False
+            pending_hero = False
         if line.startswith("# "):
             title = line[2:].strip()
             m = re.search(r"(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})", title)
@@ -8569,6 +8578,14 @@ td { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; letter-spa
                 parts.append(f"<li>{inline_md(lines[i].lstrip()[2:])}</li>")
                 i += 1
             parts.append("</ul>")
+            continue
+        if (pending_hero or hero_open) and _hero_line(line):
+            if not hero_open:
+                parts.append("<div class=hero>")
+                hero_open = True
+                pending_hero = False
+            parts.append(f"<p>{inline_md(line)}</p>")
+            i += 1
             continue
         if pending_hero and line.startswith("**"):
             parts.append("<div class=hero>")
@@ -8720,15 +8737,22 @@ if __name__ == "__main__":
         assert "仓怎么分：" in gen and "游资≠打板" in gen
         assert "section class=sec0" in gen
         assert ".sec0 h2#s0" in gen
+        assert ".sec0 .hero p:first-child b" in gen
+        assert ".sec0 td:first-child { font-weight:800" not in gen
+        assert 'f"今日必买：**{buy_line}**"' in gen
         html0 = render_report_html(
             "# 今日自选 2026-09-22 12:00 北京\n\n"
-            "## 0 今日必买\n**今日必买：无**\n"
-            "**仓怎么分：游资≠打板。** 游资是7a短线仓。\n"
+            "## 0 今日必买\n今日必买：**天娱数科**\n"
+            "备选池（观察不进最值得买）：立讯\n"
+            "仓怎么分：**游资≠打板。** 游资是7a短线仓。\n"
             "## 1 尾盘狙击\n正文\n"
         )
         assert "<section class=sec0>" in html0
         assert html0.find("<section class=sec0>") < html0.find("id='s0'")
         assert html0.find("</section>") < html0.find("id='s1'")
+        assert "<b>天娱数科</b>" in html0
+        assert html0.find("<div class=hero>") < html0.find("天娱数科")
+        assert html0.find("</div>") < html0.find("仓怎么分")
         assert "游资≠打板" in html0
         assert _em_diff({"data": {"diff": [{"f12": "1"}]}})[0]["f12"] == "1"
         assert _em_diff({"data": {"diff": {"0": {"f12": "2"}}}})[0]["f12"] == "2"

@@ -4482,78 +4482,6 @@ def journal_backfill_exits():
     return changed
 
 
-_SLTP_MD_RE = re.compile(
-    r"(\d+\.\d+)\s*\(\s*[+-]?\d+(?:\.\d+)?%\s*\)\s*\|\s*"
-    r"(\d+\.\d+)\s*\(\s*[+-]?\d+(?:\.\d+)?%\s*\)\s*/\s*(\d+\.\d+)"
-)
-_REPORT_SLTP_CACHE = {}
-
-
-def _sltp_from_md(text, name):
-    """从当时报告第0节表抠止损/止盈。入选当时的纪律价，不是事后改的。"""
-    if not text or not name:
-        return None
-    for line in str(text).splitlines():
-        if name not in line:
-            continue
-        if "可小仓" not in line and "可尾盘" not in line:
-            continue
-        m = _SLTP_MD_RE.search(line)
-        if m:
-            return float(m.group(1)), float(m.group(2)), float(m.group(3))
-    return None
-
-
-def _sltp_from_report(date_s, time_s, name):
-    key = (date_s, time_s, name)
-    if key in _REPORT_SLTP_CACHE:
-        return _REPORT_SLTP_CACHE[key]
-    ds = str(date_s or "").replace("-", "")
-    ts = str(time_s or "").replace(":", "")
-    if len(ds) != 8 or len(ts) < 3:
-        _REPORT_SLTP_CACHE[key] = None
-        return None
-    path = os.path.join(ROOT, "reports", f"{ds}_{ts}.md")
-    got = None
-    try:
-        if os.path.isfile(path):
-            got = _sltp_from_md(open(path, encoding="utf-8").read(), name)
-    except Exception:
-        got = None
-    _REPORT_SLTP_CACHE[key] = got
-    return got
-
-
-def journal_backfill_exits():
-    """老记录没存止盈止损：用入选当时那份报告补上，写回 journal。"""
-    recs = journal_load(3)
-    by_file = {}
-    changed = 0
-    for r in recs:
-        fn = _journal_file(r.get("date") or "")
-        by_file.setdefault(fn, []).append(r)
-        if r.get("call") not in ("可小仓", "可尾盘"):
-            continue
-        if r.get("sl") is not None:
-            continue
-        ex = _sltp_from_report(r.get("date"), r.get("time"), r.get("name"))
-        if not ex:
-            continue
-        r["sl"], r["tp1"], r["tp2"] = ex
-        changed += 1
-    if not changed:
-        return 0
-    for fn, rows in by_file.items():
-        try:
-            os.makedirs(os.path.dirname(fn), exist_ok=True)
-            with open(fn, "w", encoding="utf-8") as fh:
-                for r in rows:
-                    fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-        except Exception:
-            continue
-    return changed
-
-
 def _bar_on(hist, date_s):
     for b in hist or []:
         if b[0] == date_s:
@@ -4610,7 +4538,8 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
     可小仓：盘中 09:30-14:50 入选 → 成交价=入选价；收盘后/盘前 → 次日开。
     可尾盘：14:30 后记的就是当日尾盘价，不再改成次日开。
     A股T+1，胜负看次日收相对成交价扣成本。隔夜=次日开相对入选价。
-    止盈止损用入选当时记下的价；当日若还没入档，用这一轮纪律价补上。"""
+    止盈止损用入选当时记下的价；当日若还没入档，用这一轮纪律价补上。
+    入选次数=这只票在表里出现的天数（每天第一次算一次）。"""
     first = {}
     exits_now = exits_now or {}
     session_s = session_date(now)
@@ -4621,6 +4550,16 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
         old = first.get(key)
         if not old or str(r.get("time") or "") < str(old.get("time") or ""):
             first[key] = r
+    n_pick = {}
+    nth_of = {}
+    by_code_dates = {}
+    for date_s, code in first:
+        by_code_dates.setdefault(code, []).append(date_s)
+    for code, dates in by_code_dates.items():
+        uniq = sorted(set(dates))
+        n_pick[code] = len(uniq)
+        for i, d in enumerate(uniq, 1):
+            nth_of[(d, code)] = i
     rows = []
     n_open = n_open_win = 0
     n_fill = n_fill_win = 0
@@ -4685,6 +4624,8 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
             "kind": r.get("kind"), "line": r.get("line"),
             "px": px, "entry": entry, "how": how,
             "sl": sl, "tp1": tp1, "tp2": tp2,
+            "n_pick": n_pick.get(r.get("code")) or 1,
+            "nth": nth_of.get((r.get("date"), r.get("code"))) or 1,
             "nxt_open": nxt_open, "open_pct": overnight,
             "nxt_close": nxt_close, "net_close": net, "result": result,
         })
@@ -7682,12 +7623,16 @@ def main():
                 f"可成交有数 {blob.get('n_close') or 0} 笔，收盘胜率 {win_close}，均盈 {_pp(blob.get('avg_close'))}。"
                 "样本少于20笔先别下结论。"
             )
-            lines.append("| 入选日 | 名称 | 入选价 | 成交价 | 口径 | 止损 | 止盈 | 次日开 | 隔夜 | 次日收 | 扣成本 | 结果 |")
-            lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+            lines.append("| 入选日 | 名称 | 入选次数 | 入选价 | 成交价 | 口径 | 止损 | 止盈 | 次日开 | 隔夜 | 次日收 | 扣成本 | 结果 |")
+            lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
             for r in blob.get("rows") or []:
                 sl_s, tp_s = _sltp(r)
+                nth = r.get("nth") or 1
+                n_pick = r.get("n_pick") or 1
+                times = f"{nth}/{n_pick}"
                 lines.append(
                     f"| {r.get('date') or ''} | {r.get('name') or r.get('code')} "
+                    f"| {times} "
                     f"| {_p(r.get('px'))} | {_p(r.get('entry'))} | {r.get('how') or '-'} "
                     f"| {sl_s} | {tp_s} "
                     f"| {_p(r.get('nxt_open'))} | {_pp(r.get('open_pct'))} "
@@ -7742,6 +7687,7 @@ def main():
         f"A股T+1，**胜负=次日收÷成交价，已扣成本{cost_txt}%**。"
         "隔夜=次日开相对入选价，只作隔夜参考。"
         "止损/止盈是入选当时的纪律价（第0节那套），不是事后改的；当时报告里有的会补上，没有才标-。"
+        "入选次数=近窗该票可小仓天数（每天第一次算一次）；2/3=这是第2次、共3次。"
         "次日收要等那天 15:00 收盘后那一轮快照才填，盘中和 15:00 前都是待收盘。",
         f"- 还没有可小仓留档（本次新增判别 {n_j} 条）。出现今日必买之后，这里会列出入选日和入选价。",
         bt,
@@ -7802,7 +7748,7 @@ def main():
         "口径：每个交易日每只票只记**第一次可尾盘**。14:30后入选价=当时尾盘价，不改成次日开。"
         "隔夜胜率=次日开÷入选价，这是早盘兑现的参考。"
         "收盘胜率是拿到次日收，比策略10:00清完更晚，只作对照。"
-        "不进今日必买。",
+        "不进今日必买。入选次数=近窗该票可尾盘天数（每天第一次算一次）。",
         "- 还没有可尾盘留档。第1节筛出可尾盘后，这里会列出入选日和尾盘价。"
         + (f"（本次新增 {n_jm} 条）" if n_jm else ""),
         mt,
@@ -8714,6 +8660,7 @@ if __name__ == "__main__":
         assert gen.find("## 2 胜率追踪") > gen.find("## 1 尾盘狙击")
         assert gen.find("### 胜率-今日必买") > gen.find("## 2 胜率追踪")
         assert gen.find("### 胜率-尾盘狙击") > gen.find("### 胜率-今日必买")
+        assert "入选次数" in gen
         assert gen.find("## 3 板块资金") > gen.find("### 胜率-尾盘狙击")
         assert gen.find("## 5 个股一览") > gen.find("## 4 集合竞价")
         assert gen.find("## 6 趋势复核") > gen.find("## 5 个股一览")
@@ -8844,6 +8791,16 @@ if __name__ == "__main__":
         }]
         bt = _buy_track(sl_recs, {}, t(10, 0), 0.1)
         assert bt["rows"][0]["sl"] == 44.19 and bt["rows"][0]["tp1"] == 48.98, bt["rows"][0]
+        n_recs = [
+            {"date": "2026-09-18", "time": "18:42", "code": "300502", "name": "新易盛", "call": "可小仓", "px": 445.0},
+            {"date": "2026-09-21", "time": "09:40", "code": "300502", "name": "新易盛", "call": "可小仓", "px": 463.36},
+            {"date": "2026-09-21", "time": "09:39", "code": "002050", "name": "三花智控", "call": "可小仓", "px": 35.94},
+        ]
+        nt = _buy_track(n_recs, {}, t(10, 0), 0.1)
+        by = {(r["code"], r["date"]): r for r in nt["rows"]}
+        assert by[("300502", "2026-09-18")]["n_pick"] == 2 and by[("300502", "2026-09-18")]["nth"] == 1, by
+        assert by[("300502", "2026-09-21")]["nth"] == 2 and by[("300502", "2026-09-21")]["n_pick"] == 2, by
+        assert by[("002050", "2026-09-21")]["n_pick"] == 1 and by[("002050", "2026-09-21")]["nth"] == 1, by
         sh_recs = [{
             "date": "2026-09-21", "time": "09:39", "code": "002050", "name": "三花智控",
             "call": "可小仓", "px": 35.94,

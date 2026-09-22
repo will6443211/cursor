@@ -506,6 +506,14 @@ def display_kind(kind):
     }.get(k, k or "-")
 
 
+def display_call(call):
+    """给人看的买点。内部 journal 仍用 可小仓；页面上可小仓=今日必买=入选。"""
+    c = (call or "").strip()
+    if c == "可小仓":
+        return "今日必买"
+    return c or "-"
+
+
 def style_books():
     """四仓买卖钟。按A股短线常见高胜率做法，不是席位T+0。尾盘隔夜仓=隔夜套利，单独一仓。"""
     return [
@@ -4424,7 +4432,7 @@ def _sltp_from_md(text, name):
     for line in str(text).splitlines():
         if name not in line:
             continue
-        if "可小仓" not in line and "可尾盘" not in line:
+        if "可小仓" not in line and "今日必买" not in line and "可尾盘" not in line:
             continue
         m = _SLTP_MD_RE.search(line)
         if m:
@@ -6066,7 +6074,7 @@ def explain_analyze(s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
             stuck += f" 要翻成可小仓：{flip_txt}。"
     add(
         "结论",
-        f"{hand_of(call)}。走{gate_name}，买点「{call}」。{stuck}"
+        f"{hand_of(call)}。走{gate_name}，买点「{display_call(call)}」。{stuck}"
         f"值分 {_n(sc, 0)} 只在已经过闸的票里排队，不能把观察抬成可小仓。",
     )
 
@@ -6899,7 +6907,7 @@ def main():
             why = why + "；" + "、".join(extra)
         ent = f.get("entry")
         ent_txt = f"；买点分{ent:.0f}" if ent is not None else ""
-        pick_lines.append(f"{s['name']} {q['px']:.2f} {q['chg']:+.2f}% → **{call}**（{why}{ent_txt}）")
+        pick_lines.append(f"{s['name']} {q['px']:.2f} {q['chg']:+.2f}% → **{display_call(call)}**（{why}{ent_txt}）")
         if call == "可小仓":
             can_small.append(s["name"])
         elif call == "观察":
@@ -7402,6 +7410,7 @@ def main():
     lines.append(f"**今日最值得买 TOP5：{top5_line}**")
     lines.append(f"**备选池（观察不进最值得买）：{alt_line}**")
     lines.append("仓怎么分：**游资≠打板。** 游资是7a短线仓（09:35–10:15）。打板有两套：早盘接力仓（昨板今接力，今首板不追）在第0节；尾盘狙击是隔夜打板，只看第1节，不进今日必买。")
+    lines.append("怎么看：**今日必买＝可小仓＝入选。** 看上面「今日必买」那行，或本表「买点」列。备选池是观察，不算入选。")
     lines.append("| 仓 | 股票 | 价 | 今涨 | 买点 | 主线 | 为什么 | 止损 | 止盈 |")
     lines.append("|---|---|---|---|---|---|---|---|---|")
     n0 = 0
@@ -7409,25 +7418,25 @@ def main():
         n0 += 1
         _, htag = heat_pts_of(st, line)
         sl, tp = xit(name)
-        lines.append(f"| 趋势 | {name} | {px:.2f} | {chg:+.2f}% | **可小仓** | {htag} | {why} | {sl} | {tp} |")
+        lines.append(f"| 趋势 | {name} | {px:.2f} | {chg:+.2f}% | **{display_call('可小仓')}** | {htag} | {why} | {sl} | {tp} |")
     for name, px, chg, sc, line, st, how, code in daban_ok:
         n0 += 1
         _, htag = heat_pts_of(st, line)
         sl, tp = xit(name)
         setup = (daban_by_code.get(code) or {}).get("setup") or "打板"
-        lines.append(f"| 早盘接力仓 | {name} | {px:.2f} | {chg:+.2f}% | **可小仓** | {htag} | {setup}·{how} | {sl} | {tp} |")
+        lines.append(f"| 早盘接力仓 | {name} | {px:.2f} | {chg:+.2f}% | **{display_call('可小仓')}** | {htag} | {setup}·{how} | {sl} | {tp} |")
     for name, px, chg, sc, line, st, how in youzi_ok:
         n0 += 1
         _, htag = heat_pts_of(st, line)
         sl, tp = xit(name)
-        lines.append(f"| 游资 | {name} | {px:.2f} | {chg:+.2f}% | **可小仓** | {htag} | {how} | {sl} | {tp} |")
+        lines.append(f"| 游资 | {name} | {px:.2f} | {chg:+.2f}% | **{display_call('可小仓')}** | {htag} | {how} | {sl} | {tp} |")
     for name, px, chg, sc, how in etf_ok:
         n0 += 1
         ln = ETF_LINE.get(name, "ETF")
         st, line = line_status_of({"board": ln if ln != "ETF" else ""})
         _, htag = heat_pts_of(st, line)
         sl, tp = xit(name)
-        lines.append(f"| ETF | {name} | {px:.3f} | {chg:+.2f}% | **可小仓** | {htag} | {how} | {sl} | {tp} |")
+        lines.append(f"| ETF | {name} | {px:.3f} | {chg:+.2f}% | **{display_call('可小仓')}** | {htag} | {how} | {sl} | {tp} |")
     for txt in left_ok[:4]:
         n0 += 1
         nm = txt.split()[0]
@@ -7470,7 +7479,7 @@ def main():
             ap_txt = f"{ap:+.0f}" if ap else "0"
             sl, tp = xit(r["name"])
             lines.append(
-                f"| {i} | {r['name']} | {display_kind(r['kind'])} | {px} | {r['chg']:+.2f}% | **{r['call']}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
+                f"| {i} | {r['name']} | {display_kind(r['kind'])} | {px} | {r['chg']:+.2f}% | **{display_call(r['call'])}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
             )
     lines.append("### 备选池（观察/可试仓；热度再高也不进最值得买；止盈止损是预案，未过闸不算仓）")
     lines.append("| 序 | 股票 | 仓 | 价 | 今涨 | 买点 | 竞价 | 主线热度 | 盘面 | 值分 | 角色 | 止损 | 止盈 | 为什么 |")
@@ -7484,7 +7493,7 @@ def main():
             ap_txt = f"{ap:+.0f}" if ap else "0"
             sl, tp = xit(r["name"])
             lines.append(
-                f"| {i} | {r['name']} | {display_kind(r['kind'])} | {px} | {r['chg']:+.2f}% | **{r['call']}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
+                f"| {i} | {r['name']} | {display_kind(r['kind'])} | {px} | {r['chg']:+.2f}% | **{display_call(r['call'])}** | {r.get('auc') or '-'}({ap_txt}) | {r['heat']} | {r['tape_txt']} | **{r['score']:.0f}** | {r['role']} | {sl} | {tp} | {r['why']} |"
             )
     # ---- 0c 组合与仓位 ----
     cfgp = pf.get("cfg") or {}
@@ -7544,7 +7553,7 @@ def main():
     lines.append("- 判别加了滞后带：刚过线要连续两次达标才给可小仓。降级、骗炮、回避立即生效。情绪退潮：打板空仓，游资抬门槛只做低位，趋势不追热，不再一刀切关掉游资。")
     lines.append("- 早盘接力仓：今首板不追。只做昨首板一进二、昨烂板弱转强、板内龙头回头。昨一字不打。赚钱效应差或情绪退潮时不新开。可小仓不要求 7a。")
     lines.append("- 竞价涨停/近板开后砸盘→不买（出货）。竞价质量已并入各战法盘面分；量比和换手都按时段归一（早盘成交前置，10:00的量比1.5不等于14:30的1.5）。")
-    lines.append("- 表一看「买点」列：可小仓=能买，观察=盯着，不买/不追=不能买。分只是均线健康。")
+    lines.append("- 表一看「买点」列：今日必买（可小仓）=入选能买，观察=备选池只盯，不买/不追=不能买。分只是均线健康。")
     miss_q = [x["name"] for x in stocks + etfs if not live.get(x["code"])]
     if miss_q or FETCH_FAIL or FLOW_STALE:
         bits = []
@@ -7659,15 +7668,15 @@ def main():
         bits = []
         if buy and watch:
             bits.append(
-                f"可小仓次日胜率{buy['win']:.0f}%均收{buy['a1']:+.2f}%（{buy['n']}笔），"
+                f"今日必买次日胜率{buy['win']:.0f}%均收{buy['a1']:+.2f}%（{buy['n']}笔），"
                 f"观察{watch['win']:.0f}%均收{watch['a1']:+.2f}%（{watch['n']}笔）。"
             )
             if buy["n"] < 8 or watch["n"] < 8:
                 bits.append("样本太少，先不当真。")
             elif buy["win"] > watch["win"] + 5 and buy["a1"] > watch["a1"]:
-                bits.append("可小仓打赢观察，闸有区分度。")
+                bits.append("今日必买打赢观察，闸有区分度。")
             else:
-                bits.append("可小仓没有打赢观察，闸区分度不足；不要因此去买观察。")
+                bits.append("今日必买没有打赢观察，闸区分度不足；不要因此去买观察。")
         if skip and skip["n"] <= 5 and skip["win"] >= 80:
             bits.append("不追样本很小、次日均收高，多半是涨停/过热票惯性，不是该追的证据。")
         bits.append("3日/5日要等样本走过才有数。复盘只用来改阈值，不参与今天的判别。")
@@ -7683,23 +7692,23 @@ def main():
     lines.append("### 胜率-今日必买")
     cost_txt = bt.get("cost_pct", rv.get("cost_pct", 0.1))
     _track_block(
-        "当时买了的票（第0节可小仓）",
-        "口径：每个交易日每只票只记**第一次可小仓**（入选日+入选价）。"
-        "**同一天刷新、同一天反复出现在今日必买，都不加次数。** 尾盘狙击另表，不并进这里。"
+        "当时买了的票（进过今日必买）",
+        "口径：今日必买＝可小仓＝入选。每个交易日每只票只记**第一次进今日必买**（入选日+入选价）。"
+        "**同一天刷新、同一天反复出现在今日必买，都不加次数。** 备选池观察不算入选。尾盘狙击另表，不并进这里。"
         "盘中09:30–14:50入选，成交价=入选价；收盘后/盘前入选，成交价=次日开。"
         f"A股T+1，**胜负=次日收÷成交价，已扣成本{cost_txt}%**。"
         "隔夜=次日开相对入选价，只作隔夜参考。"
         "止损/止盈是入选当时的纪律价（第0节那套），不是事后改的；当时报告里有的会补上，没有才标-。"
-        "入选次数=近窗该票可小仓**交易日数**，不是刷新次数；第2日/共3日=这是第2个交易日、一共3天进过今日必买。"
+        "入选次数=近窗该票进过今日必买的**交易日数**，不是刷新次数；第2日/共3日=这是第2个交易日、一共3天进过今日必买。"
         "入选日后面的钟是第一次记下的时刻。次日收要等那天 15:00 收盘后那一轮快照才填，盘中和 15:00 前都是待收盘。",
-        f"- 还没有可小仓留档（本次新增判别 {n_j} 条）。出现今日必买之后，这里会列出入选日和入选价。",
+        f"- 还没有今日必买留档（本次新增判别 {n_j} 条）。第0节出现今日必买之后，这里会列出入选日和入选价。",
         bt,
     )
     lines.append("#### 当时没买的票（假如买了，不是推荐）")
     if rv.get("n_eval"):
         lines.append(
             f"口径：第0节全部判别留档 {rv['n_rec']} 条、已可评估 {rv['n_eval']} 条。"
-            "不管当时闸说可小仓还是观察/不买/不追，都用**当时价 → 之后第1/3/5个交易日收盘**，"
+            "不管当时闸说今日必买还是观察/不买/不追，都用**当时价 → 之后第1/3/5个交易日收盘**，"
             f"扣成本{rv.get('cost_pct')}%后赚钱就算这一格的「胜」。"
             "不含尾盘狙击。"
             "所以「不买 65%」不是不买也能赢，是：**假如当时违闸买了**，这批票里有 65% 次日收盘还是赚的。"
@@ -7712,15 +7721,15 @@ def main():
             a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
             ntxt = f"{r['n']}" + (" 少" if r["n"] < 8 else "")
             key = r.get("key") or "-"
-            mark = f"**{key}**" if key == "可小仓" else key
+            mark = f"**今日必买**" if key == "可小仓" else key
             lines.append(
                 f"| {mark} | {_call_mean(key)} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
             )
         by_kind = [r for r in (rv.get("by_kind") or []) if r["key"].startswith(("可小仓", "可试仓"))]
         if by_kind:
-            lines.append("#### 按仓拆开（还是上面那批可小仓，不是另一套胜率）")
+            lines.append("#### 按仓拆开（还是上面那批今日必买，不是另一套胜率）")
             lines.append(
-                "把当时买了的票再按仓切开：可小仓/趋势、可小仓/游资、可小仓/早盘接力仓。"
+                "把当时买了的票再按仓切开：今日必买/趋势、今日必买/游资、今日必买/早盘接力仓。"
                 "跟上面「当时买了的票」是同一批，只是看哪一种仓更赚钱。"
             )
             lines.append("| 仓 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
@@ -7732,7 +7741,7 @@ def main():
                 k = r["key"]
                 if "/" in k:
                     a, b = k.split("/", 1)
-                    k = f"{a}/{display_kind(b)}"
+                    k = f"{display_call(a)}/{display_kind(b)}"
                 lines.append(
                     f"| {k} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
                 )
@@ -7878,7 +7887,7 @@ def main():
             ws, wr = wtxt(s["code"])
             ac = ((f or {}).get("auction") or {}).get("call") or "-"
             lines.append(
-                f"| {n} | {s['name']} | **{call}** | {ac} | {kind} | {q['px']:.2f} | {q['chg']:+.2f}% | {sc} | {ent} | **{ws}** | {wr} | {t1_ma_flag(q, f)} | {vr} | {dd} | {sl} | {pb} | {rs} | {brs} | {vp} | {orb} | {yhl} | {boll} | {hsp} | {pos} | {why} |"
+                f"| {n} | {s['name']} | **{display_call(call)}** | {ac} | {kind} | {q['px']:.2f} | {q['chg']:+.2f}% | {sc} | {ent} | **{ws}** | {wr} | {t1_ma_flag(q, f)} | {vr} | {dd} | {sl} | {pb} | {rs} | {brs} | {vp} | {orb} | {yhl} | {boll} | {hsp} | {pos} | {why} |"
             )
     lines.append("")
     lines.append(f"### 表一ETF（{len(etf_t1)}只）")
@@ -7897,7 +7906,7 @@ def main():
         call = (verdicts.get(s["code"]) or ("观察",))[0]
         ws, wr = wtxt(s["code"])
         lines.append(
-            f"| {n} | {s['name']} | **{call}** | {q['px']:.3f} | {q['chg']:+.2f}% | {sc} | **{ws}** | {wr} | {t1_ma_flag(q, f)} | {vr} | {dd} | {sl} | {rs} | {orb} | {pos} |"
+            f"| {n} | {s['name']} | **{display_call(call)}** | {q['px']:.3f} | {q['chg']:+.2f}% | {sc} | **{ws}** | {wr} | {t1_ma_flag(q, f)} | {vr} | {dd} | {sl} | {rs} | {orb} | {pos} |"
         )
     if not etf_t1:
         lines.append("| - | ETF报价暂缺 | - | - | - | - | - | - | - | - | - | - | - | - | - |")
@@ -7947,7 +7956,7 @@ def main():
     miss_rows.sort()
     for _, _, _, s, q, yz, call, why in miss_rows[:12]:
         n_miss += 1
-        lines.append(f"| {n_miss} | {s['name']} | {yz['score']:.0f} | **{call}** | {why} |")
+        lines.append(f"| {n_miss} | {s['name']} | {yz['score']:.0f} | **{display_call(call)}** | {why} |")
     if not n_miss:
         lines.append("| - | 游资仓均过闸或本池无游资 | - | - | - |")
     tf = next((x for x in yz_ranked if x[0]["name"] == "天孚通信"), None)
@@ -7955,7 +7964,7 @@ def main():
     if tf:
         s, q, f, yld, yz = tf
         call, why, kind, line, st = verdicts.get(s["code"], ("观察", "", "", "", ""))
-        lines.append(f"- 天孚通信：7a {yz['score']:.0f}，买点 **{call}**（{why}）。盘面再强，主线回避或闸没过就不能进最值得买。")
+        lines.append(f"- 天孚通信：7a {yz['score']:.0f}，买点 **{display_call(call)}**（{why}）。盘面再强，主线回避或闸没过就不能进最值得买。")
     if xy:
         s, q, f, yld, yz = xy
         call, why, kind, line, st = verdicts.get(s["code"], ("观察", "", "", "", ""))
@@ -7963,7 +7972,7 @@ def main():
             hint = "7a<65就是未达标，不能当游资可买"
         else:
             hint = "7a已过65，挡在门外的是总闸（回避/量能/追高等），不是分数不够"
-        lines.append(f"- 新易盛：7a {yz['score']:.0f}，买点 **{call}**（{why}）。{hint}。")
+        lines.append(f"- 新易盛：7a {yz['score']:.0f}，买点 **{display_call(call)}**（{why}）。{hint}。")
     lines.append("")
     lines.append("## 8 左侧超跌")
     lines.append("进池/左侧分仍是原公式：乖离/RSI/距前高超跌 + 收阳或长下影止跌 + 放量承接。斐波那契只标注。趋势可试仓额外要求：均线走平、且 RSI拐头或缩量再放量或二探不破；大盘偏弱则趋势票只观察。游资左侧不要求均线走平。失败：破今日低或 ATR。类型列区分趋势/游资。")
@@ -7992,7 +8001,7 @@ def main():
         for i, (s, q, f, yld, yz) in enumerate(inn_yz, 1):
             call = (verdicts.get(s["code"]) or ("观察",))[0]
             lines.append(
-                f"| {i} | {s['name']} | {q['chg']:+.2f}% | {yz.get('main',0)/1e8:+.1f}亿 | {yz.get('xlarge',0)/1e8:+.1f}亿 | {yz.get('main5',0)/1e8:+.1f}亿 | {yz.get('same_mark') or '-'} | {yz.get('sec_txt') or '-'} | {yz.get('auc_txt') or '-'} | **{yz['score']:.0f}** | **{call}** |"
+                f"| {i} | {s['name']} | {q['chg']:+.2f}% | {yz.get('main',0)/1e8:+.1f}亿 | {yz.get('xlarge',0)/1e8:+.1f}亿 | {yz.get('main5',0)/1e8:+.1f}亿 | {yz.get('same_mark') or '-'} | {yz.get('sec_txt') or '-'} | {yz.get('auc_txt') or '-'} | **{yz['score']:.0f}** | **{display_call(call)}** |"
             )
     else:
         lines.append("| - | 游资池暂无主力净流入 | - | - | - | - | - | - | - | - | - |")
@@ -8004,7 +8013,7 @@ def main():
         for i, (s, q, f, yld, yz) in enumerate(out_yz, 1):
             call = (verdicts.get(s["code"]) or ("观察",))[0]
             lines.append(
-                f"| {i} | {s['name']} | {q['chg']:+.2f}% | {yz.get('main',0)/1e8:+.1f}亿 | {yz.get('xlarge',0)/1e8:+.1f}亿 | {yz.get('main5',0)/1e8:+.1f}亿 | {yz.get('same_mark') or '-'} | {yz.get('sec_txt') or '-'} | {yz.get('auc_txt') or '-'} | **{yz['score']:.0f}** | **{call}** |"
+                f"| {i} | {s['name']} | {q['chg']:+.2f}% | {yz.get('main',0)/1e8:+.1f}亿 | {yz.get('xlarge',0)/1e8:+.1f}亿 | {yz.get('main5',0)/1e8:+.1f}亿 | {yz.get('same_mark') or '-'} | {yz.get('sec_txt') or '-'} | {yz.get('auc_txt') or '-'} | **{yz['score']:.0f}** | **{display_call(call)}** |"
             )
     else:
         lines.append("| - | 游资池暂无主力净流出 | - | - | - | - | - | - | - | - | - |")
@@ -8084,22 +8093,22 @@ def main():
         n_buy_rows += 1
         fit = mark_row(name, trend_best)
         sl, tp = xit(name)
-        lines.append(f"| 趋势 | {name} | {px:.2f} | {chg:+.2f}% | 表一{sc:.0f}/买点{ent:.0f} | {line}/{st} | {why} | {fit} | **可小仓** | {sl} | {tp} |")
+        lines.append(f"| 趋势 | {name} | {px:.2f} | {chg:+.2f}% | 表一{sc:.0f}/买点{ent:.0f} | {line}/{st} | {why} | {fit} | **{display_call('可小仓')}** | {sl} | {tp} |")
     for name, px, chg, sc, line, st, how, code in daban_ok:
         n_buy_rows += 1
         fit = "首选" if pick_name == name else "可买"
         sl, tp = xit(name)
-        lines.append(f"| 早盘接力仓 | {name} | {px:.2f} | {chg:+.2f}% | 打板{sc:.0f} | {line}/{st} | {how} | {fit} | **可小仓** | {sl} | {tp} |")
+        lines.append(f"| 早盘接力仓 | {name} | {px:.2f} | {chg:+.2f}% | 打板{sc:.0f} | {line}/{st} | {how} | {fit} | **{display_call('可小仓')}** | {sl} | {tp} |")
     for name, px, chg, sc, line, st, how in youzi_ok:
         n_buy_rows += 1
         fit = "尾盘不新开" if late_youzi else mark_row(name, youzi_best)
         sl, tp = xit(name)
-        lines.append(f"| 游资 | {name} | {px:.2f} | {chg:+.2f}% | 7a {sc:.0f} | {line}/{st} | {how} | {fit} | **可小仓** | {sl} | {tp} |")
+        lines.append(f"| 游资 | {name} | {px:.2f} | {chg:+.2f}% | 7a {sc:.0f} | {line}/{st} | {how} | {fit} | **{display_call('可小仓')}** | {sl} | {tp} |")
     for name, px, chg, sc, how in etf_ok:
         n_buy_rows += 1
         fit = "首选" if pick_name == name else "可买"
         sl, tp = xit(name)
-        lines.append(f"| ETF | {name} | {px:.3f} | {chg:+.2f}% | ETF分 {sc:.0f} | ETF | {how} | {fit} | **可小仓** | {sl} | {tp} |")
+        lines.append(f"| ETF | {name} | {px:.3f} | {chg:+.2f}% | ETF分 {sc:.0f} | ETF | {how} | {fit} | **{display_call('可小仓')}** | {sl} | {tp} |")
     for txt in left_ok[:6]:
         n_buy_rows += 1
         nm = txt.split()[0]
@@ -8317,7 +8326,7 @@ def cell_class(header, text):
         if t.startswith("-"):
             return "dn"
     if header in ("状态", "判断", "怎么做", "操作分", "买点", "角色", "竞价判断", "竞价", "价量同向", "流向", "结果"):
-        if any(k in t for k in ("可小仓", "可试仓", "可做", "可买", "抢筹强", "胜")):
+        if any(k in t for k in ("今日必买", "可小仓", "可试仓", "可做", "可买", "抢筹强", "胜")):
             return "ok"
         if any(k in t for k in ("不买", "不追", "回避", "剔除", "骗炮", "见顶", "板块冷", "砸盘弱", "负")):
             return "bad"
@@ -8700,6 +8709,9 @@ if __name__ == "__main__":
         assert display_kind("尾盘隔夜仓") == "尾盘狙击"
         assert display_kind("午夜关注") == "尾盘狙击"
         assert display_kind("趋势") == "趋势"
+        assert display_call("可小仓") == "今日必买"
+        assert display_call("观察") == "观察"
+        assert "今日必买＝可小仓＝入选" in gen
         assert "### 0d 可以买跟踪" not in gen
         assert "### 0a 买点钟" not in gen
         assert "### 0e 最新资讯" not in gen
@@ -8826,6 +8838,8 @@ if __name__ == "__main__":
             "站回均价且未破关键低、涨幅未过热 | 34.17(-4.9%) | 37.83(+5.3%) / 38.84(+8.1%) |"
         )
         assert _sltp_from_md(sample_md, "三花智控") == (34.17, 37.83, 38.84)
+        sample_md2 = sample_md.replace("**可小仓**", "**今日必买**")
+        assert _sltp_from_md(sample_md2, "三花智控") == (34.17, 37.83, 38.84)
         sl_recs = [{
             "date": "2026-09-22", "time": "09:44", "code": "600276", "name": "恒瑞医药",
             "call": "可小仓", "px": 45.91, "sl": 44.19, "tp1": 48.98, "tp2": 50.64,

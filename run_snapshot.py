@@ -1774,11 +1774,11 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
     # 1 板块资金：行业主力是否同向；缺数据不当中性放行
     if sector_miss:
         s_sec, sec_txt, sec_mark = 40, "板块资金缺", "缺"
-    elif any(k in inn_lines for k in flow_keys_of(line)) or (n_b and up_in >= 2):
-        s_sec = 90 if any(k in inn_lines for k in flow_keys_of(line)) else 82
-        sec_txt = "板块流入" if any(k in inn_lines for k in flow_keys_of(line)) else f"{board}个股热钱同向"
+    elif any(k in inn_lines for k in flow_keys_of(line, s)) or (n_b and up_in >= 2):
+        s_sec = 90 if any(k in inn_lines for k in flow_keys_of(line, s)) else 82
+        sec_txt = "板块流入" if any(k in inn_lines for k in flow_keys_of(line, s)) else f"{board}个股热钱同向"
         sec_mark = "同向"
-    elif any(k in out_lines for k in flow_keys_of(line)) or (
+    elif any(k in out_lines for k in flow_keys_of(line, s)) or (
         line in {"光通信", "PCB", "半导体", "算力液冷", "电子元件"} and "电子/科技" in out_lines
     ):
         s_sec = 38
@@ -1989,14 +1989,208 @@ def youzi_score(s, q, f, yld, flow, inn_lines, out_lines, board_heat=None, hist=
     }
 
 
-# 东财行业榜只有前12，创新药/CRO 经常排不进。点名再拉一次，给医药细线独立桶。
-SECTOR_PIN_BKS = (
-    "BK1106",  # 概念 创新药
-    "BK0899",  # 概念 CRO
-    "BK1600",  # 行业 医疗研发外包
-    "BK0465",  # 行业 化学制药（创新药热度备用）
-    "BK0727",  # 行业 医疗服务
-)
+# 自选每只票对口的东财行业/概念。不写死 BK。refresh_stock_buckets 填。
+STOCK_HY = {}
+FLOW_KEEP = set()
+_PIN_BKS = []
+SECTOR_CATALOG_PATH = os.path.join(ROOT, "reports", "sector_catalog.json")
+STOCK_HY_PATH = os.path.join(ROOT, "reports", "stock_hy.json")
+
+
+def _concepts_of(raw):
+    s = str(raw or "").replace("，", ",")
+    return [c.strip() for c in s.split(",") if c and str(c).strip() and not str(c).strip()[:1].isdigit()]
+
+
+def _pick_primary(board, line, hy, concepts):
+    """自选手写板块 → 东财真实资金桶。不写死 BK。
+    1) 概念名等于板块或主线  2) 最短的、包含板块/主线的概念
+    3) 东财行业  4) 主线名。紫金行业=工业金属，不并进有色金属。"""
+    board = (board or "").strip()
+    line = (line or "").strip()
+    hy = (hy or "").strip()
+    cons = [c for c in (concepts or []) if c]
+    for c in cons:
+        if c == board or c == line:
+            return c
+    hits = []
+    for key in (board, line):
+        if len(key) < 2:
+            continue
+        for c in cons:
+            if key in c:
+                hits.append(c)
+    if hits:
+        return min(hits, key=lambda x: (len(x), x))
+    if hy:
+        return hy
+    return line or board or ""
+
+
+def stock_primary(s):
+    if not s:
+        return None
+    info = STOCK_HY.get(s.get("code") or "") or {}
+    p = (info.get("primary") or "").strip()
+    return p or None
+
+
+def _catalog_page(fs, pn, hosts):
+    for host in hosts:
+        try:
+            d = http(
+                f"{host}?pn={pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f12&fs={fs}&fields=f12,f14",
+                timeout=12,
+            )
+            rows = _em_diff(d)
+            total = ((d or {}).get("data") or {}).get("total")
+            if rows:
+                return rows, total
+        except Exception:
+            continue
+    return [], None
+
+
+def _catalog_fetch(fs):
+    names = {}
+    hosts = em_flow_hosts("/api/qt/clist/get")
+    for pn in range(1, 12):
+        rows, total = _catalog_page(fs, pn, hosts)
+        if not rows:
+            break
+        for x in rows:
+            n = str(x.get("f14") or "").strip()
+            bk = str(x.get("f12") or "").strip()
+            if n and bk:
+                names[n] = bk
+        if total and len(names) >= int(total):
+            break
+    return names
+
+
+def sector_catalog():
+    """东财行业(t:2)+概念(t:3)名称→BK。当日缓存，不写死代码。"""
+    today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
+    try:
+        blob = json.load(open(SECTOR_CATALOG_PATH, encoding="utf-8"))
+        if blob.get("date") == today and blob.get("hy") and blob.get("gn"):
+            return {"hy": blob["hy"], "gn": blob["gn"]}
+    except Exception:
+        pass
+    hy = _catalog_fetch("m:90+t:2")
+    gn = _catalog_fetch("m:90+t:3")
+    if hy or gn:
+        try:
+            os.makedirs(os.path.dirname(SECTOR_CATALOG_PATH), exist_ok=True)
+            json.dump(
+                {"date": today, "hy": hy, "gn": gn},
+                open(SECTOR_CATALOG_PATH, "w", encoding="utf-8"),
+                ensure_ascii=False,
+            )
+        except Exception:
+            pass
+    return {"hy": hy or {}, "gn": gn or {}}
+
+
+def _stock_hy_fetch(stocks):
+    """ulist 的 f127/f129 是数字垃圾，必须 stock/get 拿行业/概念字符串。"""
+    out = {}
+    items = [s for s in (stocks or []) if s.get("code") and s.get("asset") != "etf"]
+    if not items:
+        return out
+
+    def one(s):
+        sid = em_secid(s)
+        hosts = em_flow_hosts("/api/qt/stock/get")
+        for host in hosts:
+            try:
+                d = http(f"{host}?secid={sid}&fields=f12,f14,f127,f129", timeout=10)
+                data = (d or {}).get("data") or {}
+                hy = str(data.get("f127") or "").strip()
+                if hy[:1].isdigit():
+                    hy = ""
+                cons = _concepts_of(data.get("f129"))
+                return s["code"], hy, cons
+            except Exception:
+                continue
+        return s["code"], "", []
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = [ex.submit(one, s) for s in items]
+        for fut in as_completed(futs):
+            try:
+                code, hy, cons = fut.result()
+                out[code] = (hy, cons)
+            except Exception:
+                continue
+    return out
+
+
+def refresh_stock_buckets(stocks):
+    """按自选实时行业/概念建独立资金桶，点名拉不进前12的细线。"""
+    global STOCK_HY, FLOW_KEEP, _PIN_BKS
+    today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
+    items = [s for s in (stocks or []) if s.get("code")]
+    fetched = {}
+    try:
+        blob = json.load(open(STOCK_HY_PATH, encoding="utf-8"))
+        if blob.get("date") == today and isinstance(blob.get("rows"), dict) and blob["rows"]:
+            fetched = {
+                c: (v.get("hy") or "", list(v.get("concepts") or []))
+                for c, v in blob["rows"].items()
+            }
+    except Exception:
+        fetched = {}
+    miss = [s for s in items if s.get("code") not in fetched]
+    if miss:
+        got = _stock_hy_fetch(miss)
+        fetched.update(got)
+        if got:
+            try:
+                os.makedirs(os.path.dirname(STOCK_HY_PATH), exist_ok=True)
+                rows = {}
+                try:
+                    old = json.load(open(STOCK_HY_PATH, encoding="utf-8"))
+                    if old.get("date") == today:
+                        rows = dict(old.get("rows") or {})
+                except Exception:
+                    rows = {}
+                for c, (hy, cons) in fetched.items():
+                    rows[c] = {"hy": hy, "concepts": cons}
+                json.dump(
+                    {"date": today, "rows": rows},
+                    open(STOCK_HY_PATH, "w", encoding="utf-8"),
+                    ensure_ascii=False,
+                )
+            except Exception:
+                pass
+    cat = sector_catalog()
+    hy_map, gn_map = cat.get("hy") or {}, cat.get("gn") or {}
+    STOCK_HY = {}
+    keep = set()
+    pins = []
+    seen_bk = set()
+    for s in items:
+        code = s.get("code")
+        hy, cons = fetched.get(code, ("", []))
+        board = s.get("board") or ""
+        line = line_of_board(board)
+        primary = _pick_primary(board, line, hy, cons)
+        STOCK_HY[code] = {
+            "hy": hy, "concepts": cons, "primary": primary,
+            "board": board, "line": line,
+        }
+        for name in (primary, hy):
+            if not name:
+                continue
+            keep.add(name)
+            bk = hy_map.get(name) or gn_map.get(name)
+            if bk and bk not in seen_bk:
+                seen_bk.add(bk)
+                pins.append(bk)
+    FLOW_KEEP = keep
+    _PIN_BKS = pins
+    return STOCK_HY
 
 
 def _fmt_sector_row(x, lead=False):
@@ -2014,28 +2208,41 @@ def _fmt_sector_row(x, lead=False):
 
 
 def _sector_pin_rows():
-    """创新药、CRO 等不在行业前12时，用板块代码点名拉主力。"""
+    """行业前12之外，按自选真实行业/概念点名拉主力。BK 来自目录，不写死。"""
+    if not _PIN_BKS:
+        return []
     ut = "fa5fd1943c7b386f172d6893dbfba10b"
-    secids = ",".join("90." + b for b in SECTOR_PIN_BKS)
     hosts = em_flow_hosts("/api/qt/ulist.np/get")
-    for host in hosts:
-        try:
-            d = http(
-                f"{host}?fltt=2&np=1&ut={ut}&secids={secids}&fields=f12,f14,f3,f62,f204",
-                timeout=12,
-            )
-            rows = _em_diff(d)
-            if rows:
-                return rows
-        except Exception:
-            continue
-    return []
+    out = []
+    seen = set()
+    for i in range(0, len(_PIN_BKS), 18):
+        chunk = _PIN_BKS[i:i + 18]
+        secids = ",".join("90." + b for b in chunk)
+        rows = []
+        for host in hosts:
+            try:
+                d = http(
+                    f"{host}?fltt=2&np=1&ut={ut}&secids={secids}&fields=f12,f14,f3,f62,f204",
+                    timeout=12,
+                )
+                rows = _em_diff(d)
+                if rows:
+                    break
+            except Exception:
+                continue
+        for x in rows:
+            name = (x.get("f14") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(x)
+    return out
 
 
 def sector_flow():
     """东财行业主力。开盘只用实时；休市 live 连不上就爬 delay（昨收最新）。
     盘中不用 delay。周五缓存周一开盘后不用。
-    行业前12之外再点名创新药/CRO，避免细线只能借医药生物。"""
+    行业前12之外再点名自选对口的行业/概念桶，细线不并进手写大类。"""
     ut = "fa5fd1943c7b386f172d6893dbfba10b"
     base = (
         "pn=1&pz=12&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2"
@@ -3003,17 +3210,12 @@ def sector_token(row):
     return (row or "").split()[0] if row else ""
 
 
-def flow_keys_of(line):
-    """细线对应的东财资金名。创新药看概念创新药，游资医药看 CRO，不跟医药生物抢同一桶。"""
-    return {
-        "创新药": ("创新药",),
-        "游资医药": ("CRO", "医疗研发外包", "游资医药"),
-        "CRO": ("CRO", "医疗研发外包"),
-        "医疗": ("医疗", "医疗服务"),
-        "中药": ("中药",),
-        "医药": ("医药",),
-        "化学制药": ("化学制药",),
-    }.get(line, (line,)) if line else ()
+def flow_keys_of(line, stock=None):
+    """细线对应的东财资金名。有独立桶就只看这只票自己的行业/概念，不写死别名。"""
+    p = stock_primary(stock) if stock else None
+    if p:
+        return (p,)
+    return (line,) if line else ()
 
 
 def line_of_board(board):
@@ -3314,28 +3516,29 @@ def overnight_news_lines(now, ovn_scan):
     return lines
 
 
+def _flow_alias(tok):
+    """东财板块名 → 主线名。自选对口的细行业/概念留原名，不并进有色/医药等大类。"""
+    tok = (tok or "").strip()
+    if not tok:
+        return tok
+    if tok in FLOW_KEEP:
+        return tok
+    for k, line in FLOW_LINE:
+        if k in tok:
+            return line
+    return tok
+
+
 def flow_sets(inn, outf):
     inn_lines, out_lines = [], []
     for row in inn:
-        tok = sector_token(row)
-        for k, line in FLOW_LINE:
-            if k in tok:
-                if line not in inn_lines:
-                    inn_lines.append(line)
-                break
-        else:
-            if tok and tok not in inn_lines:
-                inn_lines.append(tok)
+        line = _flow_alias(sector_token(row))
+        if line and line not in inn_lines:
+            inn_lines.append(line)
     for row in outf:
-        tok = sector_token(row)
-        for k, line in FLOW_LINE:
-            if k in tok:
-                if line not in out_lines:
-                    out_lines.append(line)
-                break
-        else:
-            if tok and tok not in out_lines:
-                out_lines.append(tok)
+        line = _flow_alias(sector_token(row))
+        if line and line not in out_lines:
+            out_lines.append(line)
     return inn_lines, out_lines
 
 
@@ -3347,10 +3550,11 @@ NOISE_OUT = {
 
 
 def desk_lines_of(stocks, etfs=None):
-    """自选股票/ETF 对得上的主线名。"""
+    """自选股票/ETF 对得上的主线名。有独立桶用独立桶，不再把手写有色/医药当成资金名。"""
     lines = []
     for s in stocks or []:
-        ln = line_of_board((s or {}).get("board"))
+        p = stock_primary(s)
+        ln = p or line_of_board((s or {}).get("board"))
         if ln and ln not in lines:
             lines.append(ln)
     for e in etfs or []:
@@ -3363,11 +3567,8 @@ def desk_lines_of(stocks, etfs=None):
 
 def avoid_for_desk(avoid, desk_lines):
     """首页回避主线：只显示自选对口、且该线自己主力净出。
-    玻纤/建材等不进闸。亨通跟 CPO，通信线缆流出不显示成光通信回避。
-    游资医药对口 CRO 独立桶，创新药对口概念创新药。"""
+    玻纤/建材等不进闸。亨通跟 CPO，通信线缆流出不显示成光通信回避。"""
     desk = set(desk_lines or [])
-    if "游资医药" in desk:
-        desk.add("CRO")
     shown = []
     for x in avoid or []:
         if x in NOISE_OUT:
@@ -3412,11 +3613,7 @@ def flow_heat_map(inn, outf):
     def eat(rows, side):
         for row in rows:
             tok = sector_token(row)
-            line = tok
-            for k, ln in FLOW_LINE:
-                if k in tok:
-                    line = ln
-                    break
+            line = _flow_alias(tok)
             cm = re.search(r"([+-]?\d+\.?\d*)%", str(row))
             am = re.search(r"主力([+-]?\d+\.?\d*)亿", str(row))
             chg = float(cm.group(1)) if cm else 0.0
@@ -4213,6 +4410,150 @@ def journal_record(rows, now):
     return len(new)
 
 
+_SLTP_MD_RE = re.compile(
+    r"(\d+\.\d+)\s*\(\s*[+-]?\d+(?:\.\d+)?%\s*\)\s*\|\s*"
+    r"(\d+\.\d+)\s*\(\s*[+-]?\d+(?:\.\d+)?%\s*\)\s*/\s*(\d+\.\d+)"
+)
+_REPORT_SLTP_CACHE = {}
+
+
+def _sltp_from_md(text, name):
+    """从当时报告第0节表抠止损/止盈。入选当时的纪律价，不是事后改的。"""
+    if not text or not name:
+        return None
+    for line in str(text).splitlines():
+        if name not in line:
+            continue
+        if "可小仓" not in line and "可尾盘" not in line:
+            continue
+        m = _SLTP_MD_RE.search(line)
+        if m:
+            return float(m.group(1)), float(m.group(2)), float(m.group(3))
+    return None
+
+
+def _sltp_from_report(date_s, time_s, name):
+    key = (date_s, time_s, name)
+    if key in _REPORT_SLTP_CACHE:
+        return _REPORT_SLTP_CACHE[key]
+    ds = str(date_s or "").replace("-", "")
+    ts = str(time_s or "").replace(":", "")
+    if len(ds) != 8 or len(ts) < 3:
+        _REPORT_SLTP_CACHE[key] = None
+        return None
+    path = os.path.join(ROOT, "reports", f"{ds}_{ts}.md")
+    got = None
+    try:
+        if os.path.isfile(path):
+            got = _sltp_from_md(open(path, encoding="utf-8").read(), name)
+    except Exception:
+        got = None
+    _REPORT_SLTP_CACHE[key] = got
+    return got
+
+
+def journal_backfill_exits():
+    """老记录没存止盈止损：用入选当时那份报告补上，写回 journal。"""
+    recs = journal_load(3)
+    by_file = {}
+    changed = 0
+    for r in recs:
+        fn = _journal_file(r.get("date") or "")
+        by_file.setdefault(fn, []).append(r)
+        if r.get("call") not in ("可小仓", "可尾盘"):
+            continue
+        if r.get("sl") is not None:
+            continue
+        ex = _sltp_from_report(r.get("date"), r.get("time"), r.get("name"))
+        if not ex:
+            continue
+        r["sl"], r["tp1"], r["tp2"] = ex
+        changed += 1
+    if not changed:
+        return 0
+    for fn, rows in by_file.items():
+        try:
+            os.makedirs(os.path.dirname(fn), exist_ok=True)
+            with open(fn, "w", encoding="utf-8") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        except Exception:
+            continue
+    return changed
+
+
+_SLTP_MD_RE = re.compile(
+    r"(\d+\.\d+)\s*\(\s*[+-]?\d+(?:\.\d+)?%\s*\)\s*\|\s*"
+    r"(\d+\.\d+)\s*\(\s*[+-]?\d+(?:\.\d+)?%\s*\)\s*/\s*(\d+\.\d+)"
+)
+_REPORT_SLTP_CACHE = {}
+
+
+def _sltp_from_md(text, name):
+    """从当时报告第0节表抠止损/止盈。入选当时的纪律价，不是事后改的。"""
+    if not text or not name:
+        return None
+    for line in str(text).splitlines():
+        if name not in line:
+            continue
+        if "可小仓" not in line and "可尾盘" not in line:
+            continue
+        m = _SLTP_MD_RE.search(line)
+        if m:
+            return float(m.group(1)), float(m.group(2)), float(m.group(3))
+    return None
+
+
+def _sltp_from_report(date_s, time_s, name):
+    key = (date_s, time_s, name)
+    if key in _REPORT_SLTP_CACHE:
+        return _REPORT_SLTP_CACHE[key]
+    ds = str(date_s or "").replace("-", "")
+    ts = str(time_s or "").replace(":", "")
+    if len(ds) != 8 or len(ts) < 3:
+        _REPORT_SLTP_CACHE[key] = None
+        return None
+    path = os.path.join(ROOT, "reports", f"{ds}_{ts}.md")
+    got = None
+    try:
+        if os.path.isfile(path):
+            got = _sltp_from_md(open(path, encoding="utf-8").read(), name)
+    except Exception:
+        got = None
+    _REPORT_SLTP_CACHE[key] = got
+    return got
+
+
+def journal_backfill_exits():
+    """老记录没存止盈止损：用入选当时那份报告补上，写回 journal。"""
+    recs = journal_load(3)
+    by_file = {}
+    changed = 0
+    for r in recs:
+        fn = _journal_file(r.get("date") or "")
+        by_file.setdefault(fn, []).append(r)
+        if r.get("call") not in ("可小仓", "可尾盘"):
+            continue
+        if r.get("sl") is not None:
+            continue
+        ex = _sltp_from_report(r.get("date"), r.get("time"), r.get("name"))
+        if not ex:
+            continue
+        r["sl"], r["tp1"], r["tp2"] = ex
+        changed += 1
+    if not changed:
+        return 0
+    for fn, rows in by_file.items():
+        try:
+            os.makedirs(os.path.dirname(fn), exist_ok=True)
+            with open(fn, "w", encoding="utf-8") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        except Exception:
+            continue
+    return changed
+
+
 def _bar_on(hist, date_s):
     for b in hist or []:
         if b[0] == date_s:
@@ -4334,6 +4675,10 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
                 sl = ex.get("sl")
                 tp1 = tp1 if tp1 is not None else ex.get("tp1")
                 tp2 = tp2 if tp2 is not None else ex.get("tp2")
+        if sl is None:
+            exr = _sltp_from_report(r.get("date"), r.get("time"), r.get("name"))
+            if exr:
+                sl, tp1, tp2 = exr[0], tp1 if tp1 is not None else exr[1], tp2 if tp2 is not None else exr[2]
         rows.append({
             "date": r.get("date"), "time": r.get("time"),
             "code": r.get("code"), "name": r.get("name"),
@@ -4356,6 +4701,10 @@ def _buy_track(recs, hist_by_code, now, cost_pct=0.1, call="可小仓", exits_no
 
 def journal_review(hist_by_code, days=30, cost_pct=0.1, exits_now=None):
     """按判别分桶算胜率和平均收益。这张表是用来改阈值的依据，不参与今天的闸。"""
+    try:
+        journal_backfill_exits()
+    except Exception:
+        pass
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     today = now.strftime("%Y-%m-%d")
     since = (now - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
@@ -5440,28 +5789,10 @@ def hand_of(call):
 
 def heat_pts_of(st, line, heat_map):
     """主线热度只认本线主力，不借光通信/电子的钱给液冷、光纤、PCB。
-    创新药用概念创新药/化学制药，CRO 用 CRO/医疗研发外包，不再先借医药生物。
+    也不借医药生物给创新药/医疗服务，不借有色金属给工业金属。缺自己的桶就按 0。
     别名 _heat_pts_of 给主流程用，保证批量报告和单股分析页同一套口径。"""
     heat_map = heat_map or {}
-    h = {}
-    prefer = {
-        "创新药": ("创新药", "化学制药"),
-        "游资医药": ("CRO", "医疗研发外包"),
-        "CRO": ("CRO", "医疗研发外包"),
-        "医疗": ("医疗", "医疗服务"),
-    }.get(line)
-    if prefer:
-        for k in prefer:
-            if k in heat_map:
-                h = heat_map[k]
-                break
-    elif line in heat_map:
-        h = heat_map[line]
-    elif line in MED_LINES:
-        for k in ("医药", "医疗", "医疗服务"):
-            if k in heat_map:
-                h = heat_map[k]
-                break
+    h = heat_map.get(line) or {}
     amt = h.get("amt") or 0
     if st == "可做":
         pts = 22 + clip(amt / 4.0, 0, 12)
@@ -5477,20 +5808,20 @@ def heat_pts_of(st, line, heat_map):
 
 def line_status_of(s, doable, avoid):
     """批量报告和单股分析共用这一份。ETF 走 ETF_LINE 重映射。
-    创新药/CRO 有自己的东财桶就用自己的进出来回避，不跟医药生物连坐。"""
+    资金闸看这只票自己的东财行业/概念桶，不跟手写大类连坐。"""
     line = line_of_board(s.get("board"))
     if s.get("asset") == "etf" or "ETF" in (s.get("name") or ""):
         line = ETF_LINE.get(s.get("name") or "", line or "ETF")
-    keys = flow_keys_of(line) or (line,)
-    if any(k in (avoid or []) for k in keys):
-        return "回避", line
+    money = stock_primary(s) or line
+    if money in (avoid or []):
+        return "回避", money
     if line == "中药" and "医药" in (doable or []):
         return "中性", line
-    if line in (doable or []) or any(k in (doable or []) for k in keys):
+    if money in (doable or []):
+        return "可做", money
+    if (not stock_primary(s)) and line in MED_LINES and line not in ("中药", "创新药", "游资医药", "CRO") and "医药" in (doable or []):
         return "可做", line
-    if line in MED_LINES and line not in ("中药", "创新药", "游资医药", "CRO") and "医药" in (doable or []):
-        return "可做", line
-    return "中性", line
+    return "中性", money
 
 
 # 盘面分内部已经含「板块资金」和「竞价质量」的战法。值分里不能再整份加一遍
@@ -6025,6 +6356,10 @@ def analyze_one(code, board="自选", kind_hint=""):
     yld = False if is_etf else yday_limit_down(code, hist)
     ran("昨跌停", True, "ETF跳过" if is_etf else ("昨跌停" if yld else "否"))
     try:
+        refresh_stock_buckets((WL.get("stocks") or []) + [s])
+    except Exception:
+        pass
+    try:
         inn, outf = sector_flow()
     except Exception:
         inn, outf = [], []
@@ -6266,6 +6601,10 @@ def main():
         if q:
             etf_lines.append(f"{e['name']} {q['px']:.3f} {q['chg']:+.2f}%")
 
+    try:
+        refresh_stock_buckets(stocks)
+    except Exception:
+        pass
     inn, outf = sector_flow()
     sector_flow_ok = bool(inn or outf)
     etf_items = []
@@ -7402,7 +7741,7 @@ def main():
         "盘中09:30–14:50入选，成交价=入选价；收盘后/盘前入选，成交价=次日开。"
         f"A股T+1，**胜负=次日收÷成交价，已扣成本{cost_txt}%**。"
         "隔夜=次日开相对入选价，只作隔夜参考。"
-        "止损/止盈是入选当时的纪律价（第0节那套），不是事后改的；老记录没有就标-。"
+        "止损/止盈是入选当时的纪律价（第0节那套），不是事后改的；当时报告里有的会补上，没有才标-。"
         "次日收要等那天 15:00 收盘后那一轮快照才填，盘中和 15:00 前都是待收盘。",
         f"- 还没有可小仓留档（本次新增判别 {n_j} 条）。出现今日必买之后，这里会列出入选日和入选价。",
         bt,
@@ -7473,7 +7812,7 @@ def main():
     lines.append("## 3 板块资金")
     flow_src = "盘中实时" if cn_flow_live() else "休市/竞价=昨收最新（live 优先，连不上再用 delay）"
     lines.append(
-        f"口径：东财行业主力净流入（估算），另点名创新药概念和CRO。"
+        f"口径：东财行业主力净流入（估算），另按自选每只票的东财行业/对口概念点名细桶。"
         f"{flow_src}。"
         "流入/流出只定主线热度，不单独开仓。"
         "板块热度与主线可做/回避是同一笔当日主力，不是两道条件；全市场涨停情绪另算。"
@@ -7760,7 +8099,7 @@ def main():
         lines.append("- 打板可小仓：没有。宁缺毋滥。")
     lines.append("")
     lines.append("## 11 主线方向")
-    lines.append("- 口径：板块冷/热看东财行业主力净流入，不是看涨幅热门。回避=该线自己资金净出。亨通跟CPO，和光模块放在光通信；东财通信线缆流出不把CPO打冷。元件/PCB流出不连坐光通信、半导体、液冷。三花=热管理。中材=玻纤。太极=半导体封测。恒瑞跟东财概念「创新药」独立桶，不跟医药生物连坐；万邦等游资医药跟概念「CRO」/医疗研发外包，也不借医药生物。")
+    lines.append("- 口径：板块冷/热看东财行业主力净流入，不是看涨幅热门。回避=该线自己资金净出。亨通跟CPO，和光模块放在光通信；东财通信线缆流出不把CPO打冷。元件/PCB流出不连坐光通信、半导体、液冷。三花跟汽车热管理。中材=玻纤。太极=半导体封测。每只票跟自己的东财行业或对口概念独立桶（紫金=工业金属，不跟有色金属连坐；恒瑞=创新药，不跟医药生物连坐），不写死板块代码。")
     lines.extend("- " + x for x in line_block)
     lines.append("")
     lines.append("## 12 个股对照")
@@ -8455,7 +8794,7 @@ if __name__ == "__main__":
         assert meal_nom["call"] == "不买" and meal_nom["setup"] == "市值未知", meal_nom
         assert line_status_of({"board": "创新药"}, ["光通信"], ["医药"]) == ("中性", "创新药")
         assert line_status_of({"board": "创新药"}, [], ["创新药"]) == ("回避", "创新药")
-        assert line_status_of({"board": "医药游资"}, [], ["CRO"]) == ("回避", "游资医药")
+        assert line_status_of({"board": "医药游资"}, [], ["CRO"]) == ("中性", "游资医药")
         assert line_status_of({"board": "医药游资"}, [], ["医药"]) == ("中性", "游资医药")
         assert line_status_of({"board": "医药"}, [], ["医药"]) == ("回避", "医药")
         hp, tag = heat_pts_of("中性", "创新药", {"医药": {"amt": -7.4}})
@@ -8464,12 +8803,54 @@ if __name__ == "__main__":
         assert "主力-10" in tag2, tag2
         inn2, out2 = flow_sets(["创新药 0.75% 主力-10.5亿"], ["CRO 1.57% 主力-3.6亿", "医药生物 0.8% 主力-20.0亿"])
         assert "创新药" in inn2 and "CRO" in out2 and "医药" in out2, (inn2, out2)
+        assert _pick_primary("有色", "有色", "工业金属", ["黄金概念", "稀缺资源"]) == "工业金属"
+        assert _pick_primary("有色", "有色", "小金属", ["小金属概念"]) == "小金属"
+        assert _pick_primary("创新药", "创新药", "化学制药", ["创新药", "减肥药"]) == "创新药"
+        assert _pick_primary("热管理", "热管理", "家电零部件Ⅱ", ["汽车热管理", "液冷服务器"]) == "汽车热管理"
+        assert _pick_primary("医药游资", "游资医药", "医疗服务", ["CRO", "创新药"]) == "医疗服务"
+        old_keep, old_hy = set(FLOW_KEEP), dict(STOCK_HY)
+        try:
+            FLOW_KEEP.clear()
+            FLOW_KEEP.add("工业金属")
+            FLOW_KEEP.add("小金属")
+            inn3, out3 = flow_sets(
+                ["有色金属 0.5% 主力+7.8亿"],
+                ["工业金属 0.6% 主力-3.0亿", "小金属 0.0% 主力+3.0亿"],
+            )
+            assert "有色" in inn3 and "工业金属" in out3 and "小金属" in out3, (inn3, out3)
+            assert "有色" not in out3, out3
+            STOCK_HY.clear()
+            STOCK_HY["601899"] = {"primary": "工业金属", "hy": "工业金属", "concepts": ["黄金概念"]}
+            STOCK_HY["000657"] = {"primary": "小金属", "hy": "小金属", "concepts": ["小金属概念"]}
+            STOCK_HY["301520"] = {"primary": "医疗服务", "hy": "医疗服务", "concepts": ["CRO", "创新药"]}
+            assert line_status_of({"code": "601899", "board": "有色"}, [], ["有色"]) == ("中性", "工业金属")
+            assert line_status_of({"code": "601899", "board": "有色"}, [], ["工业金属"]) == ("回避", "工业金属")
+            assert line_status_of({"code": "000657", "board": "有色"}, ["工业金属"], ["小金属"]) == ("回避", "小金属")
+            assert line_status_of({"code": "301520", "board": "医药游资"}, [], ["医药"]) == ("中性", "医疗服务")
+            assert line_status_of({"code": "301520", "board": "医药游资"}, [], ["医疗服务"]) == ("回避", "医疗服务")
+        finally:
+            FLOW_KEEP.clear()
+            FLOW_KEEP.update(old_keep)
+            STOCK_HY.clear()
+            STOCK_HY.update(old_hy)
+        sample_md = (
+            "| 趋势 | 三花智控 | 35.94 | +1.78% | **可小仓** | 热管理/中性 | "
+            "站回均价且未破关键低、涨幅未过热 | 34.17(-4.9%) | 37.83(+5.3%) / 38.84(+8.1%) |"
+        )
+        assert _sltp_from_md(sample_md, "三花智控") == (34.17, 37.83, 38.84)
         sl_recs = [{
             "date": "2026-09-22", "time": "09:44", "code": "600276", "name": "恒瑞医药",
             "call": "可小仓", "px": 45.91, "sl": 44.19, "tp1": 48.98, "tp2": 50.64,
         }]
         bt = _buy_track(sl_recs, {}, t(10, 0), 0.1)
         assert bt["rows"][0]["sl"] == 44.19 and bt["rows"][0]["tp1"] == 48.98, bt["rows"][0]
+        sh_recs = [{
+            "date": "2026-09-21", "time": "09:39", "code": "002050", "name": "三花智控",
+            "call": "可小仓", "px": 35.94,
+        }]
+        sh_bt = _buy_track(sh_recs, {}, t(10, 0), 0.1)
+        if os.path.isfile(os.path.join(ROOT, "reports", "20260921_0939.md")):
+            assert sh_bt["rows"][0]["sl"] == 34.17 and sh_bt["rows"][0]["tp1"] == 37.83, sh_bt["rows"][0]
         q_mid = dict(q)
         q_mid["mcap"] = 399
         meal_mid = overnight_meal_plan(

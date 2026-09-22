@@ -2043,6 +2043,33 @@ def stock_primary(s):
     return p or None
 
 
+def stock_identity_of(s):
+    """手写自选身份（龙头归类），不进资金闸。紫金身份=有色，资金桶=工业金属。"""
+    if not s:
+        return ""
+    info = STOCK_HY.get(s.get("code") or "") or {}
+    ident = (info.get("line") or "").strip()
+    if ident:
+        return ident
+    return (line_of_board((s or {}).get("board")) or (s or {}).get("board") or "").strip()
+
+
+def dual_heat_tag(identity, money, st, amt=None):
+    """同属两板时拆开写：身份≠资金。闸只看资金桶，身份只认龙头。"""
+    money = (money or identity or "").strip()
+    identity = (identity or money).strip()
+    if identity and money and identity != money:
+        tag = f"身份{identity}·资金{money}/{st}"
+    else:
+        tag = f"{money}/{st}" if money else str(st or "-")
+    try:
+        if amt:
+            tag += f" 主力{float(amt):+.0f}亿"
+    except (TypeError, ValueError):
+        pass
+    return tag
+
+
 def _catalog_page(fs, pn, hosts):
     for host in hosts:
         try:
@@ -2188,7 +2215,8 @@ def refresh_stock_buckets(stocks):
             "hy": hy, "concepts": cons, "primary": primary,
             "board": board, "line": line,
         }
-        for name in (primary, hy):
+        # 点名拉大类桶只为对照（有色金属 vs 工业金属），大类名不进这只票的资金闸。
+        for name in (primary, hy, *parent_flow_names(line)):
             if not name:
                 continue
             keep.add(name)
@@ -3212,6 +3240,18 @@ FLOW_LINE = [
     ("农业", "农业"), ("种业", "农业"),
     ("电网", "电网"), ("电力", "电力"),
 ]
+
+
+def parent_flow_names(line):
+    """手写主线对应的东财大类名。只点名拉桶对照，不把大类净出连坐到细桶票。"""
+    line = (line or "").strip()
+    if not line:
+        return []
+    out = []
+    for k, ln in FLOW_LINE:
+        if ln == line and k != line and k not in out:
+            out.append(k)
+    return out
 
 
 def sector_token(row):
@@ -5736,10 +5776,10 @@ def hand_of(call):
     return "不能下手"
 
 
-def heat_pts_of(st, line, heat_map):
-    """主线热度只认本线主力，不借光通信/电子的钱给液冷、光纤、PCB。
+def heat_pts_of(st, line, heat_map, stock=None):
+    """主线热度只认资金桶主力，不借光通信/电子的钱给液冷、光纤、PCB。
     也不借医药生物给创新药/医疗服务，不借有色金属给工业金属。缺自己的桶就按 0。
-    别名 _heat_pts_of 给主流程用，保证批量报告和单股分析页同一套口径。"""
+    同属两板时标签拆成「身份·资金」，分数仍只看资金桶。"""
     heat_map = heat_map or {}
     h = heat_map.get(line) or {}
     amt = h.get("amt") or 0
@@ -5749,9 +5789,8 @@ def heat_pts_of(st, line, heat_map):
         pts = (8 + clip(amt / 6.0, 0, 6)) if h else 0
     else:
         pts = clip(amt / 8.0, -8, 0)
-    tag = f"{line}/{st}"
-    if amt:
-        tag += f" 主力{amt:+.0f}亿"
+    ident = stock_identity_of(stock) if stock else ""
+    tag = dual_heat_tag(ident, line, st, amt if amt else None)
     return pts, tag
 
 
@@ -5777,12 +5816,12 @@ def line_status_of(s, doable, avoid):
 TAPE_HAS_SECTOR_AUC = {"游资", "打板", "ETF"}
 
 
-def worth_pts(call, kind, st, line, tape, auc_call=None, ma_score=None, heat_map=None):
+def worth_pts(call, kind, st, line, tape, auc_call=None, ma_score=None, heat_map=None, stock=None):
     """值分 = 闸 + 主线热 + 盘面×0.28 + 均线分×0.18 + 竞价。
     去重：游资/打板/ETF 的盘面分（7a/打板分）里已经含板块资金和竞价质量，
     这里主线热度只按 0.45 计、竞价不再重复加；趋势用的是买点分，不含这两项，全额计。
     不这么做，同一条信息会在值分里算两到三次，游资/打板被系统性抬高，排序失真。"""
-    hp, htag = heat_pts_of(st, line, heat_map or {})
+    hp, htag = heat_pts_of(st, line, heat_map or {}, stock)
     cp = {"可小仓": 50, "可试仓": 24, "观察": 18}.get(call, 0)
     kp = 0
     if call == "可小仓":
@@ -5888,18 +5927,37 @@ def _gate_check_rows(s, q, fac, yz, st, line, kind, call, why, auc, db, mood, la
     else:
         row("过", "竞价涨停开后砸盘", f"开幅{_n(gap, 2, '%')}，不是近板开，这条没触发。")
 
+    ident = stock_identity_of(s)
+    dual = ident and line and ident != line
     if st == "回避":
         money = f"主力{amt:+.1f}亿" if amt else "主力净出"
         px_txt = f"，板块涨跌{schg:+.2f}%" if schg is not None else ""
-        row("挡", "主线回避",
-            f"板块「{(s or {}).get('board') or '-'}」归到主线「{line}」，当日{money}{px_txt}。"
-            "闸认这条线自己的钱在出，不认跌幅，也不连坐光通信/半导体。",
-            "本线主力转净流入后，结构闸还要同时过")
+        if dual:
+            detail = (
+                f"身份「{ident}」（自选龙头归类），资金桶「{line}」（东财行业/概念）。"
+                f"当日资金桶{money}{px_txt}。闸只认资金桶自己净出；「{ident}」大类净出不连坐这只。"
+            )
+        else:
+            detail = (
+                f"板块「{(s or {}).get('board') or '-'}」归到主线「{line}」，当日{money}{px_txt}。"
+                "闸认这条线自己的钱在出，不认跌幅，也不连坐光通信/半导体。"
+            )
+        row("挡", "主线回避", detail, "本线主力转净流入后，结构闸还要同时过")
     elif st == "可做":
         money = f"主力{amt:+.1f}亿" if amt else "主力净进"
-        row("过", "主线回避", f"主线「{line}」可做（{money}）。热门涨幅不等于主力在进，这里已经是资金确认。")
+        if dual:
+            row("过", "主线回避",
+                f"身份「{ident}」，资金桶「{line}」可做（{money}）。"
+                f"「{ident}」大类即使净出也不连坐；热门涨幅不等于主力在进。")
+        else:
+            row("过", "主线回避", f"主线「{line}」可做（{money}）。热门涨幅不等于主力在进，这里已经是资金确认。")
     else:
-        row("过", "主线回避", f"主线「{line}」中性，未进回避名单，不否决。")
+        if dual:
+            row("过", "主线回避",
+                f"身份「{ident}」，资金桶「{line}」中性。闸看资金桶，未进回避名单，不否决；"
+                f"「{ident}」大类净出也不连坐。")
+        else:
+            row("过", "主线回避", f"主线「{line}」中性，未进回避名单，不否决。")
 
     if phase == "退潮" and kind == "打板":
         row("挡", "全市场情绪", "涨停生态是退潮，打板空仓，不新开。", "情绪走出退潮后再谈打板")
@@ -6131,10 +6189,18 @@ def explain_analyze(s, q, fac, yz, st, line, kind, call, why, auc, db, left, ex,
         if line_amt < 0 and (line_chg or 0) > 0:
             flow_note += "，典型价涨资金出"
         flow_note += "。"
+    ident = stock_identity_of(s)
+    if ident and line and ident != line:
+        belong = (
+            f"同属两板：身份「{ident}」（自选龙头归类），资金桶「{line}」（东财行业/概念）。"
+            f"状态「{st}」（{htag}）。闸只看资金桶；「{ident}」大类净出不连坐这只。"
+        )
+    else:
+        belong = f"板块「{s.get('board') or '-'}」→ 主线「{line}」，状态「{st}」（{htag}）。"
     add(
         "主线资金",
-        f"板块「{s.get('board') or '-'}」→ 主线「{line}」，状态「{st}」（{htag}）。{flow_note}"
-        f"今日可做：{inn_s}。今日回避：{out_s}。"
+        belong + flow_note
+        + f"今日可做：{inn_s}。今日回避：{out_s}。"
         "首页回避只显示自选对口线；汽车/煤炭/银行即使全市场在跌也不进这套闸。"
         "板块热度和主线可做/回避是同一笔当日主力，不是两道条件。",
     )
@@ -6413,7 +6479,7 @@ def analyze_one(code, board="自选", kind_hint=""):
         gate_name = "趋势闸"
     auc = ((fac or {}).get("auction") or {})
     ma_score = (fac or {}).get("buy") or 0
-    sc, htag, ap = worth_pts(call, kind, st, line, tape, auc.get("call"), ma_score, heat_map)
+    sc, htag, ap = worth_pts(call, kind, st, line, tape, auc.get("call"), ma_score, heat_map, s)
     left = None
     if fac and not is_etf:
         try:
@@ -6437,7 +6503,7 @@ def analyze_one(code, board="自选", kind_hint=""):
             call, why, kind = db["call"], db["why"], "打板"
             tape = db.get("score") or 0
             tape_txt = f"打板{tape:.0f}"
-            sc, htag, ap = worth_pts(call, kind, st, line, tape, auc.get("call"), ma_score, heat_map)
+            sc, htag, ap = worth_pts(call, kind, st, line, tape, auc.get("call"), ma_score, heat_map, s)
         elif db.get("call") == "可小仓" and call == "可小仓":
             kind = "打板"
             why = db["why"] + "；" + why
@@ -6850,8 +6916,19 @@ def main():
     def line_status_of(s):
         return _line_status_of(s, doable, avoid)
 
-    def heat_pts_of(st, line):
-        return _heat_pts_of(st, line, heat_map)
+    def heat_pts_of(st, line, stock=None):
+        return _heat_pts_of(st, line, heat_map, stock)
+
+    def stock_by_name(name, code=None):
+        if code:
+            for x in stocks or []:
+                if x.get("code") == code:
+                    return x
+            return {"code": code, "name": name}
+        for x in stocks or []:
+            if x.get("name") == name:
+                return x
+        return {"name": name or ""}
 
     left_ranked = []
     for s, q, f, yld, hist in rows:
@@ -6919,7 +6996,9 @@ def main():
     for s, q, f, yld in ranked[:8]:
         call, why = name_call(s, q, f, yld)
         st, line = line_status_of(s)
-        overlay_lines.append(f"{s['name']} 原判断{call} → 主线{line}/{st}")
+        overlay_lines.append(
+            f"{s['name']} 原判断{call} → {dual_heat_tag(stock_identity_of(s), line, st)}"
+        )
 
     doable_hits = []
     for s, q, f, yld in ranked:
@@ -7249,8 +7328,8 @@ def main():
         buy_today = "不买"
         buy_reason.append("综合结论：今天没有票过闸，不开新仓")
 
-    def worth_pts(call, kind, st, line, tape, auc_call=None, ma_score=None):
-        return _worth_pts(call, kind, st, line, tape, auc_call, ma_score, heat_map)
+    def worth_pts(call, kind, st, line, tape, auc_call=None, ma_score=None, stock=None):
+        return _worth_pts(call, kind, st, line, tape, auc_call, ma_score, heat_map, stock)
 
     def role_of(call, st):
         if call == "可小仓":
@@ -7272,7 +7351,7 @@ def main():
     def record_worth(code, name, kind, q, call, why, line, st, tape, tape_txt, auc_call=None, ma_score=None):
         if not code or code in worth_by_code or not q:
             return
-        sc, htag, ap = worth_pts(call, kind, st, line, tape, auc_call, ma_score)
+        sc, htag, ap = worth_pts(call, kind, st, line, tape, auc_call, ma_score, {"code": code, "name": name})
         worth_by_code[code] = {
             "name": name, "kind": kind, "px": q["px"], "chg": q["chg"],
             "call": call, "why": why, "line": line, "st": st,
@@ -7416,18 +7495,18 @@ def main():
     n0 = 0
     for name, px, chg, sc, line, st, why, ent in trend_ok:
         n0 += 1
-        _, htag = heat_pts_of(st, line)
+        _, htag = heat_pts_of(st, line, stock_by_name(name))
         sl, tp = xit(name)
         lines.append(f"| 趋势 | {name} | {px:.2f} | {chg:+.2f}% | **{display_call('可小仓')}** | {htag} | {why} | {sl} | {tp} |")
     for name, px, chg, sc, line, st, how, code in daban_ok:
         n0 += 1
-        _, htag = heat_pts_of(st, line)
+        _, htag = heat_pts_of(st, line, stock_by_name(name, code))
         sl, tp = xit(name)
         setup = (daban_by_code.get(code) or {}).get("setup") or "打板"
         lines.append(f"| 早盘接力仓 | {name} | {px:.2f} | {chg:+.2f}% | **{display_call('可小仓')}** | {htag} | {setup}·{how} | {sl} | {tp} |")
     for name, px, chg, sc, line, st, how in youzi_ok:
         n0 += 1
-        _, htag = heat_pts_of(st, line)
+        _, htag = heat_pts_of(st, line, stock_by_name(name))
         sl, tp = xit(name)
         lines.append(f"| 游资 | {name} | {px:.2f} | {chg:+.2f}% | **{display_call('可小仓')}** | {htag} | {how} | {sl} | {tp} |")
     for name, px, chg, sc, how in etf_ok:
@@ -8057,7 +8136,7 @@ def main():
         lines.append("- 打板可小仓：没有。宁缺毋滥。")
     lines.append("")
     lines.append("## 11 主线方向")
-    lines.append("- 口径：板块冷/热看东财行业主力净流入，不是看涨幅热门。回避=该线自己资金净出。亨通跟CPO，和光模块放在光通信；东财通信线缆流出不把CPO打冷。元件/PCB流出不连坐光通信、半导体、液冷。三花跟汽车热管理。中材=玻纤。太极=半导体封测。每只票跟自己的东财行业或对口概念独立桶（紫金=工业金属，不跟有色金属连坐；恒瑞=创新药，不跟医药生物连坐），不写死板块代码。")
+    lines.append("- 口径：板块冷/热看东财行业主力净流入，不是看涨幅热门。回避=该线自己资金净出。亨通跟CPO，和光模块放在光通信；东财通信线缆流出不把CPO打冷。元件/PCB流出不连坐光通信、半导体、液冷。三花跟汽车热管理。中材=玻纤。太极=半导体封测。同属两板拆开：身份=手写自选龙头（紫金=有色龙头），资金桶=东财行业/概念（紫金=工业金属）。闸只看资金桶，有色金属净出不连坐紫金；工业金属净出才回避。恒瑞身份和资金都是创新药，不跟医药生物连坐。不写死板块代码。")
     lines.extend("- " + x for x in line_block)
     lines.append("")
     lines.append("## 12 个股对照")
@@ -8844,14 +8923,30 @@ if __name__ == "__main__":
             assert "有色" in inn3 and "工业金属" in out3 and "小金属" in out3, (inn3, out3)
             assert "有色" not in out3, out3
             STOCK_HY.clear()
-            STOCK_HY["601899"] = {"primary": "工业金属", "hy": "工业金属", "concepts": ["黄金概念"]}
-            STOCK_HY["000657"] = {"primary": "小金属", "hy": "小金属", "concepts": ["小金属概念"]}
-            STOCK_HY["301520"] = {"primary": "医疗服务", "hy": "医疗服务", "concepts": ["CRO", "创新药"]}
+            STOCK_HY["601899"] = {"primary": "工业金属", "hy": "工业金属", "concepts": ["黄金概念"], "line": "有色", "board": "有色"}
+            STOCK_HY["000657"] = {"primary": "小金属", "hy": "小金属", "concepts": ["小金属概念"], "line": "有色", "board": "有色"}
+            STOCK_HY["301520"] = {"primary": "医疗服务", "hy": "医疗服务", "concepts": ["CRO", "创新药"], "line": "游资医药", "board": "医药游资"}
             assert line_status_of({"code": "601899", "board": "有色"}, [], ["有色"]) == ("中性", "工业金属")
             assert line_status_of({"code": "601899", "board": "有色"}, [], ["工业金属"]) == ("回避", "工业金属")
             assert line_status_of({"code": "000657", "board": "有色"}, ["工业金属"], ["小金属"]) == ("回避", "小金属")
             assert line_status_of({"code": "301520", "board": "医药游资"}, [], ["医药"]) == ("中性", "医疗服务")
             assert line_status_of({"code": "301520", "board": "医药游资"}, [], ["医疗服务"]) == ("回避", "医疗服务")
+            assert parent_flow_names("有色") == ["有色金属", "工业金属"]
+            assert dual_heat_tag("有色", "工业金属", "中性", -3) == "身份有色·资金工业金属/中性 主力-3亿"
+            assert dual_heat_tag("创新药", "创新药", "回避", -10) == "创新药/回避 主力-10亿"
+            hp3, tag3 = heat_pts_of(
+                "中性", "工业金属", {"工业金属": {"amt": -3}},
+                {"code": "601899", "board": "有色"},
+            )
+            assert "身份有色" in tag3 and "资金工业金属" in tag3 and "中性" in tag3, tag3
+            assert hp3 == 8, hp3
+            FLOW_KEEP.add("有色金属")
+            inn4, out4 = flow_sets(
+                ["有色金属 0.5% 主力+7.8亿"],
+                ["工业金属 0.6% 主力-3.0亿"],
+            )
+            assert "有色金属" in inn4 and "工业金属" in out4, (inn4, out4)
+            assert "有色" not in inn4, inn4
         finally:
             FLOW_KEEP.clear()
             FLOW_KEEP.update(old_keep)

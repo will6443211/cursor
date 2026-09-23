@@ -514,6 +514,21 @@ def display_call(call):
     return c or "-"
 
 
+def is_daban_kind(kind):
+    return (kind or "").strip() in ("打板", "早盘接力仓")
+
+
+def merge_daban_verdict(call, why, kind, db):
+    """早盘接力仓独立：打板自己给出可小仓时，不吃趋势/游资的不买、不追。
+    7a 和打板分/今首板不追仍走各自原闸。"""
+    if not db or db.get("call") != "可小仓":
+        return call, why, kind
+    db_why = db.get("why") or why
+    if call == "可小仓":
+        db_why = (db.get("why") or "") + "；" + (why or "")
+    return "可小仓", db_why, "打板"
+
+
 def style_books():
     """四仓买卖钟。按A股短线常见高胜率做法，不是席位T+0。尾盘隔夜仓=隔夜套利，单独一仓。"""
     return [
@@ -4833,6 +4848,10 @@ def journal_review(hist_by_code, days=30, cost_pct=0.1, exits_now=None):
         "days": days, "n_rec": len(recs), "n_eval": n_eval,
         "by_call": pack(buckets), "by_kind": pack(per_kind), "cost_pct": cost_pct,
         "buy_track": _buy_track(gate_recs, hist_by_code, now, cost_pct, exits_now=exits_now),
+        "daban_track": _buy_track(
+            [r for r in gate_recs if is_daban_kind(r.get("kind"))],
+            hist_by_code, now, cost_pct, exits_now=exits_now,
+        ),
         "meal_track": _buy_track(all_recs, hist_by_code, now, cost_pct, call="可尾盘", exits_now=exits_now),
     }
 
@@ -6623,14 +6642,11 @@ def analyze_one(code, board="自选", kind_hint=""):
     if not is_etf:
         db = daban_plan(s, q, fac, hist, yz, st, line, mood, late, yld,
                         zt_map(zt_y_rows), zt_map(zt_t_rows))
-        if db.get("call") == "可小仓" and call != "可小仓" and call not in ("不买", "不追"):
-            call, why, kind = db["call"], db["why"], "打板"
+        if db.get("call") == "可小仓":
+            call, why, kind = merge_daban_verdict(call, why, kind, db)
             tape = db.get("score") or 0
             tape_txt = f"打板{tape:.0f}"
             sc, htag, ap = worth_pts(call, kind, st, line, tape, auc.get("call"), ma_score, heat_map, s)
-        elif db.get("call") == "可小仓" and call == "可小仓":
-            kind = "打板"
-            why = db["why"] + "；" + why
     ran("打板战法", bool(db.get("in_pool")), (db.get("setup") or "未入池") + f" {db.get('score', 0)}")
     ex = trade_exits(s, q, fac, kind, (db or {}).get("setup") or "", hist) if call in ("可小仓", "可试仓") else None
     ran("左侧超跌", True, (left or {}).get("call") if left else ("ETF跳过" if is_etf else "未形成"))
@@ -7256,11 +7272,9 @@ def main():
             call, why = verdict_youzi(s, q, f, yld, yz, st, mood, late_youzi)
         else:
             call, why = verdict_trend(s, q, f, yld, st, mood)
-        if db.get("call") == "可小仓" and call != "可小仓" and call not in ("不买", "不追"):
-            call, why, kind = db["call"], db["why"], "打板"
-        elif db.get("call") == "可小仓" and call == "可小仓":
-            why = db["why"] + "；" + why
-            kind = "打板"
+        call, why, kind = merge_daban_verdict(call, why, kind, db)
+        g = GATE_NOW.setdefault(s["code"], {})
+        g["kind"] = kind
         verdicts[s["code"]] = (call, why, kind, line, st)
     for s, q, f, yld, yz in etf_yz:
         st, line = line_status_of(s)
@@ -7812,9 +7826,10 @@ def main():
         tag = "14:30待确认" if meal_phase == "wait" else "在池未过闸"
         lines.append(f"- **{tag}：** " + "；".join(meal_watch))
     lines.append("")
-    # ---- 2 胜率追踪：胜率-今日必买 / 胜率-尾盘狙击；对照表不是买点 ----
+    # ---- 2 胜率追踪：胜率-今日必买 / 胜率-早盘接力仓 / 胜率-尾盘狙击；对照表不是买点 ----
     rv = review or {}
     bt = rv.get("buy_track") or {}
+    dt = rv.get("daban_track") or {}
     mt = rv.get("meal_track") or {}
     def _p(v, n=2):
         return "-" if v is None else f"{v:.{n}f}"
@@ -7850,16 +7865,18 @@ def main():
                 f"后3日有数 {blob.get('n_d3') or 0} 笔，后3日胜率 {win_d3}，均盈 {_pp(blob.get('avg_d3'))}。"
                 "样本少于20笔先别下结论。"
             )
-            lines.append("| 入选日 | 名称 | 入选次数 | 入选价 | 成交价 | 口径 | 止损 | 止盈 | 次日开 | 隔夜 | 次日收 | 扣成本 | 结果 | 后2日开 | 后2日收 | 后2日胜 | 后3日开 | 后3日收 | 后3日胜 |")
-            lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+            lines.append("| 入选日 | 名称 | 仓 | 入选次数 | 入选价 | 成交价 | 口径 | 止损 | 止盈 | 次日开 | 隔夜 | 次日收 | 扣成本 | 结果 | 后2日开 | 后2日收 | 后2日胜 | 后3日开 | 后3日收 | 后3日胜 |")
+            lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
             for r in blob.get("rows") or []:
                 sl_s, tp_s = _sltp(r)
                 nth = r.get("nth") or 1
                 n_pick = r.get("n_pick") or 1
                 times = f"第{nth}日/共{n_pick}日"
                 when = (r.get("date") or "") + (f" {r['time']}" if r.get("time") else "")
+                book = display_kind(r.get("kind"))
                 lines.append(
                     f"| {when} | {r.get('name') or r.get('code')} "
+                    f"| {book} "
                     f"| {times} "
                     f"| {_p(r.get('px'))} | {_p(r.get('entry'))} | {r.get('how') or '-'} "
                     f"| {sl_s} | {tp_s} "
@@ -7903,7 +7920,7 @@ def main():
 
     lines.append("## 2 胜率追踪")
     lines.append(
-        "这一节只复盘，不改今天的闸。里面两块：**胜率-今日必买**（第0节）和 **胜率-尾盘狙击**（第1节尾盘狙击），不要混成一张总表。"
+        "这一节只复盘，不改今天的闸。里面三块：**胜率-今日必买**（第0节趋势/游资/早盘接力仓/ETF）、**胜率-早盘接力仓**（第0节这一仓单拆）、**胜率-尾盘狙击**（第1节，不进今日必买）。"
         "胜负怎么算：当时价买进 → 次日收盘卖掉（A股T+1），扣成本后赚钱=胜、亏钱=负。隔夜涨跌只是参考，不是胜负。"
         "表里再加后2日/后3日的开盘价、收盘价和胜率，口径同样是那天收盘÷成交价扣成本，只作持有对照，不改次日胜负。"
         "「不买/不追的胜率」不是你没买也算赢，是**假如当时违闸买了**，次日收盘赚不赚钱。涨停惯性会让这格看起来很赚，所以不能拿来推翻今涨停不追。"
@@ -7948,28 +7965,50 @@ def main():
                 f"| {mark} | {_call_mean(key)} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
             )
         by_kind = [r for r in (rv.get("by_kind") or []) if r["key"].startswith(("可小仓", "可试仓"))]
-        if by_kind:
-            lines.append("#### 按仓拆开（还是上面那批今日必买，不是另一套胜率）")
+        lines.append("#### 按仓拆开（还是上面那批今日必买，不是另一套胜率）")
+        lines.append(
+            "把当时买了的票再按仓切开：今日必买/趋势、今日必买/游资、今日必买/早盘接力仓。"
+            "跟上面「当时买了的票」是同一批，只是看哪一种仓更赚钱。"
+            "早盘接力仓没入选也会留一行 0 笔，避免看起来像漏了。"
+        )
+        lines.append("| 仓 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
+        lines.append("|---|---|---|---|---|---|")
+        shown = set()
+        for r in by_kind[:8]:
+            a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
+            a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
+            ntxt = f"{r['n']}" + (" 少" if r["n"] < 8 else "")
+            k = r["key"]
+            shown.add(k)
+            if "/" in k:
+                a, b = k.split("/", 1)
+                k = f"{display_call(a)}/{display_kind(b)}"
             lines.append(
-                "把当时买了的票再按仓切开：今日必买/趋势、今日必买/游资、今日必买/早盘接力仓。"
-                "跟上面「当时买了的票」是同一批，只是看哪一种仓更赚钱。"
+                f"| {k} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
             )
-            lines.append("| 仓 | 样本 | 次日胜率 | 次日均收 | 3日均收 | 5日均收 |")
-            lines.append("|---|---|---|---|---|---|")
-            for r in by_kind[:8]:
-                a3 = f"{r['a3']:+.2f}%" if r["a3"] is not None else "-"
-                a5 = f"{r['a5']:+.2f}%" if r["a5"] is not None else "-"
-                ntxt = f"{r['n']}" + (" 少" if r["n"] < 8 else "")
-                k = r["key"]
-                if "/" in k:
-                    a, b = k.split("/", 1)
-                    k = f"{display_call(a)}/{display_kind(b)}"
-                lines.append(
-                    f"| {k} | {ntxt} | {r['win']:.0f}% | {r['a1']:+.2f}% | {a3} | {a5} |"
-                )
+        if "可小仓/打板" not in shown:
+            lines.append("| 今日必买/早盘接力仓 | 0 | - | - | - | - |")
         lines.append("- 看法：" + _disc_look(rv.get("by_call") or []))
     else:
         lines.append(f"- 对照表要等隔一个交易日才有可评估样本（本次新增 {n_j} 条）。")
+    lines.append("")
+
+    lines.append("### 胜率-早盘接力仓")
+    lines.append(
+        "第0节「早盘接力仓」单拆出来的成绩。内部仍记 kind=打板。"
+        "也在胜率-今日必买里，这里只看这一仓，避免混进趋势/游资看不出来。"
+        "没入选就是这几天自选没走出昨板接力（今首板不追、赚钱效应差/退潮/打板分不够都不记入选），不是漏记。"
+    )
+    _track_block(
+        "当时早盘接力买了的票（可小仓/打板）",
+        "口径：每个交易日每只票只记**第一次早盘接力可小仓**。同一天刷新不加次数。"
+        "盘中09:30–14:50入选，成交价=入选价；收盘后/盘前入选，成交价=次日开。"
+        f"A股T+1，**胜负=次日收÷成交价，已扣成本{bt.get('cost_pct', rv.get('cost_pct', 0.1))}%**。"
+        "后2日/后3日开收和胜率只作持有对照。不跟尾盘狙击混。"
+        "入选次数=近窗该票早盘接力可小仓**交易日数**。",
+        "- 还没有早盘接力仓留档。第0节筛出早盘接力可小仓后，这里会列出入选日和入选价。",
+        dt,
+    )
     lines.append("")
 
     lines.append("### 胜率-尾盘狙击")
@@ -8509,6 +8548,21 @@ def main():
             "win_d3": (mt or {}).get("win_d3"),
             "avg_d3": (mt or {}).get("avg_d3"),
         },
+        "daban_track": {
+            "n": (dt or {}).get("n") or 0,
+            "n_open": (dt or {}).get("n_open") or 0,
+            "win_open": (dt or {}).get("win_open"),
+            "avg_open": (dt or {}).get("avg_open"),
+            "n_close": (dt or {}).get("n_close") or 0,
+            "win_close": (dt or {}).get("win_close"),
+            "avg_close": (dt or {}).get("avg_close"),
+            "n_d2": (dt or {}).get("n_d2") or 0,
+            "win_d2": (dt or {}).get("win_d2"),
+            "avg_d2": (dt or {}).get("avg_d2"),
+            "n_d3": (dt or {}).get("n_d3") or 0,
+            "win_d3": (dt or {}).get("win_d3"),
+            "avg_d3": (dt or {}).get("avg_d3"),
+        },
         "portfolio": {
             "cfg": pf.get("cfg"),
             "used_pct": round(pf.get("used_pct") or 0, 1),
@@ -8946,12 +9000,14 @@ if __name__ == "__main__":
         assert gen.find("## 15 买点钟") > gen.find("## 14 买点明细")
         assert gen.find("## 2 胜率追踪") > gen.find("## 1 尾盘狙击")
         assert gen.find("### 胜率-今日必买") > gen.find("## 2 胜率追踪")
-        assert gen.find("### 胜率-尾盘狙击") > gen.find("### 胜率-今日必买")
+        assert gen.find("### 胜率-早盘接力仓") > gen.find("### 胜率-今日必买")
+        assert gen.find("### 胜率-尾盘狙击") > gen.find("### 胜率-早盘接力仓")
         assert "入选次数" in gen
         assert "第{nth}日/共{n_pick}日" in gen
         assert "后2日开" in gen and "后3日胜" in gen
         assert "后2日胜率" in gen and "后3日胜率" in gen
         assert "同一天刷新" in gen
+        assert "今日必买/早盘接力仓 | 0" in gen
         assert gen.find("## 3 板块资金") > gen.find("### 胜率-尾盘狙击")
         assert gen.find("## 5 个股一览") > gen.find("## 4 集合竞价")
         assert gen.find("## 6 趋势复核") > gen.find("## 5 个股一览")
@@ -8965,6 +9021,14 @@ if __name__ == "__main__":
         assert display_kind("趋势") == "趋势"
         assert display_call("可小仓") == "今日必买"
         assert display_call("观察") == "观察"
+        assert is_daban_kind("打板") and is_daban_kind("早盘接力仓")
+        assert not is_daban_kind("趋势") and not is_daban_kind("游资")
+        db_up = merge_daban_verdict("不买", "阴跌破分时均价", "趋势", {"call": "可小仓", "why": "一进二达标"})
+        assert db_up == ("可小仓", "一进二达标", "打板"), db_up
+        db_skip = merge_daban_verdict("不追", "今涨停不追", "游资", {"call": "观察", "why": "今板不追"})
+        assert db_skip[0] == "不追" and db_skip[2] == "游资", db_skip
+        db_both = merge_daban_verdict("可小仓", "站回均价", "趋势", {"call": "可小仓", "why": "弱转强达标"})
+        assert db_both[0] == "可小仓" and db_both[2] == "打板" and "弱转强" in db_both[1], db_both
         assert "今日必买＝可小仓＝入选" in gen
         assert "### 0d 可以买跟踪" not in gen
         assert "### 0a 买点钟" not in gen
@@ -9048,6 +9112,20 @@ if __name__ == "__main__":
         lrow = lose["rows"][0]
         assert lrow["d2_result"] == "负" and lrow["d3_result"] == "负", lrow
         assert lose["win_d2"] == 0 and lose["win_d3"] == 0, lose
+        db_recs = [
+            {"date": "2026-09-18", "time": "09:40", "code": "000001", "name": "平安银行",
+             "call": "可小仓", "kind": "打板", "px": 10.0},
+            {"date": "2026-09-18", "time": "09:40", "code": "000002", "name": "万科A",
+             "call": "可小仓", "kind": "趋势", "px": 10.0},
+        ]
+        mixed = _buy_track(db_recs, fwd_hist, datetime.datetime(2026, 9, 23, 16, 0, tzinfo=tz), 0.1)
+        assert mixed["n"] == 2, mixed
+        only_db = _buy_track(
+            [r for r in db_recs if is_daban_kind(r.get("kind"))],
+            fwd_hist, datetime.datetime(2026, 9, 23, 16, 0, tzinfo=tz), 0.1,
+        )
+        assert only_db["n"] == 1 and only_db["rows"][0]["kind"] == "打板", only_db
+        assert only_db["rows"][0]["name"] == "平安银行", only_db
         s = {"code": "002475", "name": "立讯精密", "asset": "stock"}
         q = {
             "px": 42.0, "high": 42.3, "vwap": 41.2, "chg": 4.2, "turnover": 7.2,

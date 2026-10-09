@@ -13,7 +13,8 @@
 /agent/自选快照.html
 
 定时任务：已开启（周一到周五，北京时间，按此时点跑现在这套，不要换脚本）
-- watchlist-market-slots：09:30 / 10:30 / 11:30
+- watchlist-open-10min：09:00–10:30 每10分钟
+- watchlist-market-slots：11:30
 - watchlist-afternoon-hour：13:00 / 14:00 / 15:00
 - watchlist-1510：15:10（收盘价定格后再刷胜率追踪）
 - watchlist-1430：14:30
